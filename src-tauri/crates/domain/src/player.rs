@@ -40,6 +40,10 @@ pub struct Player {
     // Season stats
     pub stats: PlayerSeasonStats,
 
+    // Per-match stats history (used for deeper aggregates in the player profile)
+    #[serde(default)]
+    pub match_stats: Vec<PlayerMatchStatsEntry>,
+
     // Career history
     pub career: Vec<CareerEntry>,
 
@@ -152,6 +156,30 @@ pub struct PlayerSeasonStats {
     pub red_cards: u32,
     pub avg_rating: f32,
     pub minutes_played: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerMatchStatsEntry {
+    pub fixture_id: String,
+    pub season: u32,
+    pub matchday: u32,
+    pub date: String,
+    pub team_id: Option<String>,
+    pub opponent_team_id: Option<String>,
+    pub was_home: bool,
+    pub minutes_played: u8,
+    pub goals: u8,
+    pub assists: u8,
+    pub shots: u8,
+    pub shots_on_target: u8,
+    pub passes_completed: u8,
+    pub passes_attempted: u8,
+    pub tackles_won: u8,
+    pub interceptions: u8,
+    pub fouls_committed: u8,
+    pub yellow_cards: u8,
+    pub red_cards: u8,
+    pub rating: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -289,6 +317,7 @@ impl Player {
             wage: 0,
             market_value: 0,
             stats: PlayerSeasonStats::default(),
+            match_stats: Vec::new(),
             career: Vec::new(),
             training_focus: None,
             transfer_listed: false,

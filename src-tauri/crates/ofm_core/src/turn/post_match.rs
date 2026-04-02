@@ -1,7 +1,7 @@
 use crate::game::Game;
 use crate::messages;
 use domain::league::{FixtureStatus, GoalEvent, MatchResult};
-use domain::player::Position as DomainPosition;
+use domain::player::{PlayerMatchStatsEntry, Position as DomainPosition};
 use log::debug;
 
 /// Apply a completed match report to the game state: update fixture, standings,
@@ -45,8 +45,11 @@ pub fn apply_match_report(
         away_scorers,
     };
 
+    let mut fixture_meta: Option<(String, u32, u32, String)> = None;
+
     // Update fixture status, standings
     if let Some(league) = game.league.as_mut() {
+        let season = league.season;
         let fixture = &mut league.fixtures[fixture_index];
         fixture.status = FixtureStatus::Completed;
 
@@ -66,10 +69,32 @@ pub fn apply_match_report(
         }
 
         fixture.result = Some(result);
+        fixture_meta = Some((
+            fixture.id.clone(),
+            season,
+            fixture.matchday,
+            fixture.date.clone(),
+        ));
     }
 
+    let (fixture_id, season, matchday, fixture_date) = fixture_meta.unwrap_or((
+        format!("fixture-{}", fixture_index),
+        0,
+        0,
+        game.clock.current_date.format("%Y-%m-%d").to_string(),
+    ));
+
     // Update player season stats from the engine report
-    apply_player_stats(game, report, home_team_id, away_team_id);
+    apply_player_stats(
+        game,
+        report,
+        home_team_id,
+        away_team_id,
+        &fixture_id,
+        season,
+        matchday,
+        &fixture_date,
+    );
 
     // Deplete stamina for players who played
     deplete_match_stamina(game, home_team_id);
@@ -182,6 +207,10 @@ fn apply_player_stats(
     report: &engine::MatchReport,
     home_team_id: &str,
     away_team_id: &str,
+    fixture_id: &str,
+    season: u32,
+    matchday: u32,
+    fixture_date: &str,
 ) {
     for player in game.players.iter_mut() {
         if let Some(ps) = report.player_stats.get(&player.id) {
@@ -190,7 +219,7 @@ fn apply_player_stats(
             player.stats.assists += ps.assists as u32;
             player.stats.yellow_cards += ps.yellow_cards as u32;
             player.stats.red_cards += ps.red_cards as u32;
-            player.stats.minutes_played += 90;
+            player.stats.minutes_played += ps.minutes_played as u32;
 
             // Update average rating (running average)
             if player.stats.appearances == 1 {
@@ -214,6 +243,37 @@ fn apply_player_stats(
                     player.stats.clean_sheets += 1;
                 }
             }
+
+            let (opponent_team_id, was_home) = if player.team_id.as_deref() == Some(home_team_id) {
+                (Some(away_team_id.to_string()), true)
+            } else if player.team_id.as_deref() == Some(away_team_id) {
+                (Some(home_team_id.to_string()), false)
+            } else {
+                (None, false)
+            };
+
+            player.match_stats.push(PlayerMatchStatsEntry {
+                fixture_id: fixture_id.to_string(),
+                season,
+                matchday,
+                date: fixture_date.to_string(),
+                team_id: player.team_id.clone(),
+                opponent_team_id,
+                was_home,
+                minutes_played: ps.minutes_played,
+                goals: ps.goals,
+                assists: ps.assists,
+                shots: ps.shots,
+                shots_on_target: ps.shots_on_target,
+                passes_completed: ps.passes_completed,
+                passes_attempted: ps.passes_attempted,
+                tackles_won: ps.tackles_won,
+                interceptions: ps.interceptions,
+                fouls_committed: ps.fouls_committed,
+                yellow_cards: ps.yellow_cards,
+                red_cards: ps.red_cards,
+                rating: ps.rating,
+            });
         }
     }
 }
