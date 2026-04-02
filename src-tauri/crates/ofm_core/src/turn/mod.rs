@@ -1,5 +1,6 @@
 mod news;
 mod post_match;
+mod round_summary;
 
 use crate::board_objectives;
 use crate::game::Game;
@@ -7,6 +8,7 @@ use crate::player_events;
 use crate::random_events;
 use crate::scouting;
 use crate::training;
+use crate::transfers;
 use chrono::Datelike;
 use domain::league::FixtureStatus;
 use domain::player::Position as DomainPosition;
@@ -15,6 +17,23 @@ use log::{debug, info};
 // Re-export public items
 pub use news::generate_matchday_news;
 pub use post_match::apply_match_report;
+pub use round_summary::{
+    NotableUpset, RoundResultSummary, RoundSummary, StandingDelta, TopScorerDelta,
+    build_round_summary,
+};
+
+/// Progress injury recovery by one day for all currently injured players.
+/// Players with 1 day remaining are cleared (fully recovered).
+fn progress_injury_recovery(game: &mut Game) {
+    for player in game.players.iter_mut() {
+        if let Some(mut injury) = player.injury.take()
+            && injury.days_remaining > 1
+        {
+            injury.days_remaining -= 1;
+            player.injury = Some(injury);
+        }
+    }
+}
 
 /// Process a single day advance.
 pub fn process_day(game: &mut Game) {
@@ -36,6 +55,8 @@ pub fn process_day(game: &mut Game) {
         training::check_squad_fitness_warnings(game);
     }
 
+    crate::contracts::process_contract_expiries(game);
+
     // Weekly financial processing (wages, matchday income, warnings)
     crate::finances::process_weekly_finances(game);
 
@@ -45,12 +66,16 @@ pub fn process_day(game: &mut Game) {
 
     // Player conversations, random events, and scouting
     player_events::check_player_events(game);
+    progress_injury_recovery(game);
     random_events::check_random_events(game);
     scouting::process_scouting(game);
+    transfers::generate_incoming_transfer_offers(game);
 
+    news::generate_weekly_digest_news(game, &today);
     news::generate_pre_match_messages(game, &today);
     debug!("[turn] process_day {}: complete, advancing clock", today);
     game.clock.advance_days(1);
+    crate::season_context::refresh_game_context(game);
 }
 
 /// Called after a live match finishes to complete the day:
@@ -60,14 +85,20 @@ pub fn finish_live_match_day(game: &mut Game) {
     info!("[turn] finish_live_match_day: {}", today);
     generate_matchday_news(game, &today);
 
+    crate::contracts::process_contract_expiries(game);
+
     board_objectives::generate_objectives(game);
     board_objectives::update_objective_progress(game);
 
     player_events::check_player_events(game);
+    progress_injury_recovery(game);
     random_events::check_random_events(game);
     scouting::process_scouting(game);
+    transfers::generate_incoming_transfer_offers(game);
+    news::generate_weekly_digest_news(game, &today);
     news::generate_pre_match_messages(game, &today);
     game.clock.advance_days(1);
+    crate::season_context::refresh_game_context(game);
 }
 
 // ---------------------------------------------------------------------------
@@ -101,17 +132,19 @@ fn build_engine_team(game: &Game, team_id: &str) -> engine::TeamData {
         .iter()
         .filter(|p| p.team_id.as_deref() == Some(team_id))
         .map(|p| {
-            let pos = match p.position {
+            let pos = match p.position.to_group_position() {
                 DomainPosition::Goalkeeper => engine::Position::Goalkeeper,
                 DomainPosition::Defender => engine::Position::Defender,
                 DomainPosition::Midfielder => engine::Position::Midfielder,
                 DomainPosition::Forward => engine::Position::Forward,
+                _ => engine::Position::Midfielder,
             };
             engine::PlayerData {
                 id: p.id.clone(),
                 name: p.match_name.clone(),
                 position: pos,
                 condition: p.condition,
+                fitness: p.fitness,
                 pace: p.attributes.pace,
                 stamina: p.attributes.stamina,
                 strength: p.attributes.strength,

@@ -109,15 +109,16 @@ mod tests {
     use crate::game::Game;
     use crate::live_match_manager::{self, MatchMode};
     use chrono::{TimeZone, Utc};
-    use domain::league::{Fixture, FixtureStatus, League, StandingEntry};
+    use domain::league::{Fixture, FixtureCompetition, FixtureStatus, League, StandingEntry};
     use domain::manager::Manager;
     use domain::player::{Player, PlayerAttributes, Position};
     use domain::team::Team;
 
     fn default_attrs(pos: Position) -> PlayerAttributes {
-        let is_gk = matches!(pos, Position::Goalkeeper);
-        let is_def = matches!(pos, Position::Defender);
-        let is_fwd = matches!(pos, Position::Forward);
+        let group = pos.to_group_position();
+        let is_gk = matches!(group, Position::Goalkeeper);
+        let is_def = matches!(group, Position::Defender);
+        let is_fwd = matches!(group, Position::Forward);
 
         PlayerAttributes {
             pace: 65,
@@ -241,6 +242,7 @@ mod tests {
             date: "2025-06-15".to_string(),
             home_team_id: "team1".to_string(),
             away_team_id: "team2".to_string(),
+            competition: FixtureCompetition::League,
             status: FixtureStatus::Scheduled,
             result: None,
         };

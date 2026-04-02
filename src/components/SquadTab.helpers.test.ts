@@ -79,7 +79,7 @@ const makePlayer = (
 describe("SquadTab helpers", () => {
   it("normalises detailed positions into core roles", () => {
     expect(normalisePosition("Center Back")).toBe("Defender");
-    expect(normalisePosition("Winger")).toBe("Midfielder");
+    expect(normalisePosition("Winger")).toBe("Forward");
     expect(normalisePosition("Striker")).toBe("Forward");
     expect(normalisePosition("Goalkeeper")).toBe("Goalkeeper");
   });
@@ -87,16 +87,20 @@ describe("SquadTab helpers", () => {
   it("builds preferred positions using normalised natural and alternate roles", () => {
     const player = makePlayer("p1", "Center Back", {
       natural_position: "Center Back",
-      alternate_positions: ["Wing Back", "Defensive Midfielder"],
+      alternate_positions: ["Right Wing Back", "Defensive Midfielder"],
     });
 
-    expect(getPreferredPositions(player)).toEqual(["Defender", "Midfielder"]);
+    expect(getPreferredPositions(player)).toEqual([
+      "CenterBack",
+      "RightWingBack",
+      "DefensiveMidfielder",
+    ]);
   });
 
   it("detects out-of-position status using normalised roles", () => {
     const defender = makePlayer("p1", "Center Back", {
       natural_position: "Center Back",
-      alternate_positions: ["Wing Back"],
+      alternate_positions: ["Right Wing Back"],
     });
 
     expect(isPlayerOutOfPosition(defender, "Defender")).toBe(false);
@@ -114,6 +118,38 @@ describe("SquadTab helpers", () => {
     expect(rows[2].positions).toHaveLength(2);
     expect(rows[3].positions).toHaveLength(3);
     expect(rows[4].positions).toHaveLength(1);
+    expect(rows[1].positions).toEqual([
+      "LeftBack",
+      "CenterBack",
+      "CenterBack",
+      "RightBack",
+    ]);
+  });
+
+  it("keeps wide side-specific roles in left-to-right pitch order across formations", () => {
+    expect(buildPitchRows("4-4-2")[2].positions).toEqual([
+      "LeftMidfielder",
+      "CentralMidfielder",
+      "CentralMidfielder",
+      "RightMidfielder",
+    ]);
+    expect(buildPitchRows("5-3-2")[1].positions).toEqual([
+      "LeftWingBack",
+      "CenterBack",
+      "CenterBack",
+      "CenterBack",
+      "RightWingBack",
+    ]);
+    expect(buildPitchRows("4-2-3-1")[3].positions).toEqual([
+      "LeftMidfielder",
+      "AttackingMidfielder",
+      "RightMidfielder",
+    ]);
+    expect(buildPitchRows("4-3-3")[3].positions).toEqual([
+      "LeftWinger",
+      "Striker",
+      "RightWinger",
+    ]);
   });
 
   it("returns compact pitch widths for crowded rows", () => {
@@ -171,16 +207,16 @@ describe("SquadTab helpers", () => {
   it("builds pitch slot rows and active position map from xi ids", () => {
     const players = [
       makePlayer("gk", "Goalkeeper"),
-      makePlayer("d1", "Defender"),
-      makePlayer("d2", "Defender"),
-      makePlayer("d3", "Defender"),
-      makePlayer("d4", "Defender"),
-      makePlayer("m1", "Midfielder"),
-      makePlayer("m2", "Midfielder"),
-      makePlayer("m3", "Midfielder"),
-      makePlayer("m4", "Midfielder"),
-      makePlayer("f1", "Forward"),
-      makePlayer("f2", "Forward"),
+      makePlayer("d1", "LeftBack"),
+      makePlayer("d2", "CenterBack"),
+      makePlayer("d3", "CenterBack"),
+      makePlayer("d4", "RightBack"),
+      makePlayer("m1", "LeftMidfielder"),
+      makePlayer("m2", "CentralMidfielder"),
+      makePlayer("m3", "CentralMidfielder"),
+      makePlayer("m4", "RightMidfielder"),
+      makePlayer("f1", "Striker"),
+      makePlayer("f2", "Striker"),
     ];
     const xiIds = players.map((player) => player.id);
     const rows = buildPitchRows("4-4-2");
@@ -188,8 +224,61 @@ describe("SquadTab helpers", () => {
     const activeMap = buildActivePositionMap(slotRows);
 
     expect(slotRows[0].slots[0].player?.id).toBe("gk");
-    expect(activeMap.get("d1")).toBe("Defender");
-    expect(activeMap.get("f2")).toBe("Forward");
+    expect(activeMap.get("d1")).toBe("LeftBack");
+    expect(activeMap.get("m1")).toBe("LeftMidfielder");
+    expect(activeMap.get("f2")).toBe("Striker");
+  });
+
+  it("preserves saved xi order for side-specific wide roles", () => {
+    const available = [
+      makePlayer("gk", "Goalkeeper"),
+      makePlayer("rb", "RightBack", {
+        natural_position: "RightBack",
+        footedness: "Right",
+        weak_foot: 1,
+      }),
+      makePlayer("cb1", "CenterBack"),
+      makePlayer("cb2", "CenterBack"),
+      makePlayer("lb", "LeftBack", {
+        natural_position: "LeftBack",
+        footedness: "Left",
+        weak_foot: 1,
+      }),
+      makePlayer("rm", "RightMidfielder", {
+        natural_position: "RightMidfielder",
+        footedness: "Right",
+        weak_foot: 1,
+      }),
+      makePlayer("cm1", "CentralMidfielder"),
+      makePlayer("cm2", "CentralMidfielder"),
+      makePlayer("lm", "LeftMidfielder", {
+        natural_position: "LeftMidfielder",
+        footedness: "Left",
+        weak_foot: 1,
+      }),
+      makePlayer("st1", "Striker"),
+      makePlayer("st2", "Striker"),
+    ];
+
+    const ids = buildStartingXIIds(
+      available,
+      ["gk", "rb", "cb1", "cb2", "lb", "rm", "cm1", "cm2", "lm", "st1", "st2"],
+      "4-4-2",
+    );
+
+    expect(ids).toEqual([
+      "gk",
+      "rb",
+      "cb1",
+      "cb2",
+      "lb",
+      "rm",
+      "cm1",
+      "cm2",
+      "lm",
+      "st1",
+      "st2",
+    ]);
   });
 
   it("swaps XI players when dragging from one slot to another", () => {
@@ -233,18 +322,18 @@ describe("SquadTab helpers", () => {
   });
 
   it("returns core position codes", () => {
-    expect(positionCode("Center Back")).toBe("DEF");
-    expect(positionCode("Striker")).toBe("FWD");
+    expect(positionCode("Center Back")).toBe("CB");
+    expect(positionCode("Striker")).toBe("ST");
   });
 
   it("translates normalized position abbreviations with fallback codes", () => {
     const translate = (key: string): string => key;
 
     expect(translatePositionAbbreviation(translate, "Center Back")).toBe(
-      "common.posAbbr.Defender",
+      "common.posAbbr.CenterBack",
     );
     expect(translatePositionAbbreviation(translate, "Striker")).toBe(
-      "common.posAbbr.Forward",
+      "common.posAbbr.Striker",
     );
   });
 });

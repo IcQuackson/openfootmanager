@@ -16,24 +16,56 @@ import type {
 } from "../store/gameStore";
 import InboxTab from "./InboxTab";
 
+const mockTranslationState = vi.hoisted(function () {
+  return {
+    language: "en",
+    translations: {
+      en: {
+        "inbox.effectOutcomeLabel": "Outcome",
+      },
+      "pt-BR": {
+        "inbox.effectOutcomeLabel": "Desfecho",
+      },
+    } as Record<string, Record<string, string>>,
+  };
+});
+
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
 
 vi.mock("react-i18next", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-i18next")>();
+  const mockI18n = {
+    get language(): string {
+      return mockTranslationState.language;
+    },
+    async changeLanguage(language: string): Promise<string> {
+      mockTranslationState.language = language;
+      return language;
+    },
+  };
 
   return {
     ...actual,
     useTranslation: () => ({
       t: (key: string, value?: unknown) => {
+        const resolved =
+          mockTranslationState.translations[mockTranslationState.language]?.[
+            key
+          ];
+
+        if (resolved) {
+          return resolved;
+        }
+
         if (typeof value === "string") {
           return value;
         }
 
         return key;
       },
-      i18n: { language: "en" },
+      i18n: mockI18n,
     }),
   };
 });
@@ -60,6 +92,19 @@ beforeAll(function defineMatchMedia(): void {
     "translation",
     {
       "test.effectFeedback": "Resolved morale {{delta}}",
+      "be.msg.delegatedRenewals.subject":
+        "Assistant Report — Contract Renewals",
+      "be.msg.delegatedRenewals.body":
+        "Boss, I went through our renewal list at {{team}}. {{successes}} completed, {{stalled}} still pending, {{failures}} failed.",
+      "be.msg.delegatedRenewals.case.successful":
+        "Completed: {{player}} agreed to {{years}} year(s) on €{{wage}}/wk.",
+      "be.msg.delegatedRenewals.case.stalled":
+        "Still difficult: {{player}} — {{detail}}",
+      "be.msg.delegatedRenewals.case.failed": "Failed: {{player}} — {{detail}}",
+      "be.msg.delegatedRenewals.notes.beyondLimits":
+        "Their camp want around €{{wage}}/wk for {{years}} years, which is beyond the delegation limits.",
+      "be.msg.delegatedRenewals.notes.relationshipBlocked":
+        "They are not willing to commit through me under the current relationship and contract situation.",
     },
     true,
     true,
@@ -409,9 +454,176 @@ describe("InboxTab", function (): void {
     fireEvent.click(screen.getByText("Return the praise"));
 
     await waitFor(function (): void {
-      expect(screen.getByText("Resolved morale +3")).toBeInTheDocument();
+      expect(
+        screen.getByText("Outcome: Resolved morale +3"),
+      ).toBeInTheDocument();
     });
 
     expect(onGameUpdate).toHaveBeenCalledWith(resolvedGameState);
+  });
+
+  it("renders the outcome label from the active locale", async function (): Promise<void> {
+    const previousLanguage = mockTranslationState.language;
+    const onGameUpdate = vi.fn();
+    const action: MessageAction = {
+      id: "respond",
+      label: "Respond",
+      action_type: {
+        ChooseOption: {
+          options: [
+            {
+              id: "praise_back",
+              label: "Return the praise",
+              description: "Tell them how much you value their contribution.",
+            },
+          ],
+        },
+      },
+      resolved: false,
+    };
+    const resolvedGameState = createGameState([
+      createMessage({ id: "happy_player_p1", read: true, actions: [action] }),
+    ]);
+
+    mockedInvoke.mockResolvedValue({
+      game: resolvedGameState,
+      effect: "Player beams at the praise. Morale +3",
+      effect_i18n_key: "test.effectFeedback",
+      effect_i18n_params: { delta: "+3" },
+    });
+
+    mockTranslationState.language = "pt-BR";
+
+    try {
+      renderInboxTab({
+        gameState: createGameState([
+          createMessage({
+            id: "happy_player_p1",
+            read: true,
+            actions: [action],
+          }),
+        ]),
+        initialMessageId: "happy_player_p1",
+        onGameUpdate,
+      });
+
+      fireEvent.click(screen.getByText("Return the praise"));
+
+      await waitFor(function (): void {
+        expect(
+          screen.getByText("Desfecho: Resolved morale +3"),
+        ).toBeInTheDocument();
+      });
+    } finally {
+      mockTranslationState.language = previousLanguage;
+    }
+  });
+
+  it("renders delegated renewal report details from localized structured context", function (): void {
+    renderInboxTab({
+      gameState: createGameState([
+        createMessage({
+          id: "delegated_renewals_2025-01-01_0",
+          read: true,
+          category: "Contract",
+          subject_key: "be.msg.delegatedRenewals.subject",
+          body_key: "be.msg.delegatedRenewals.body",
+          i18n_params: {
+            team: "Test FC",
+            successes: "1",
+            stalled: "1",
+            failures: "1",
+          },
+          context: {
+            team_id: "t1",
+            player_id: null,
+            fixture_id: null,
+            match_result: null,
+            delegated_renewal_report: {
+              success_count: 1,
+              failure_count: 1,
+              stalled_count: 1,
+              cases: [
+                {
+                  player_id: "p1",
+                  player_name: "Alex Done",
+                  status: "successful",
+                  agreed_wage: 24000,
+                  agreed_years: 3,
+                },
+                {
+                  player_id: "p2",
+                  player_name: "Ben Pending",
+                  status: "stalled",
+                  note_key: "be.msg.delegatedRenewals.notes.beyondLimits",
+                  note_params: { wage: "26000", years: "4" },
+                },
+                {
+                  player_id: "p3",
+                  player_name: "Chris Failed",
+                  status: "failed",
+                  note_key:
+                    "be.msg.delegatedRenewals.notes.relationshipBlocked",
+                  note_params: {},
+                },
+              ],
+            },
+          },
+        }),
+      ]),
+      initialMessageId: "delegated_renewals_2025-01-01_0",
+    });
+
+    expect(screen.getByTestId("delegated-renewal-report")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Completed: Alex Done agreed to 3 year(s) on €24000/wk.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Still difficult: Ben Pending — Their camp want around €26000/wk for 4 years, which is beyond the delegation limits.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Failed: Chris Failed — They are not willing to commit through me under the current relationship and contract situation.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("tells the user that player-event response outcomes vary", function (): void {
+    const action: MessageAction = {
+      id: "respond",
+      label: "Respond",
+      action_type: {
+        ChooseOption: {
+          options: [
+            {
+              id: "encourage",
+              label: "Encourage them",
+              description: "Try to lift their spirits.",
+            },
+          ],
+        },
+      },
+      resolved: false,
+    };
+
+    renderInboxTab({
+      gameState: createGameState([
+        createMessage({
+          id: "morale_talk_p1",
+          category: "PlayerMorale",
+          read: true,
+          actions: [action],
+        }),
+      ]),
+      initialMessageId: "morale_talk_p1",
+    });
+
+    expect(
+      screen.getByText("Choose your response — outcome varies"),
+    ).toBeInTheDocument();
   });
 });

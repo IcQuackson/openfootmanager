@@ -1,4 +1,4 @@
-use domain::player::{Player, PlayerAttributes, Position};
+use domain::player::{Footedness, Player, PlayerAttributes, Position};
 use domain::team::TrainingFocus;
 use rusqlite::{Connection, params};
 
@@ -17,10 +17,13 @@ pub fn upsert_player(conn: &Connection, p: &Player) -> Result<(), String> {
     let career_json = serde_json::to_string(&p.career).map_err(|e| format!("JSON error: {}", e))?;
     let offers_json =
         serde_json::to_string(&p.transfer_offers).map_err(|e| format!("JSON error: {}", e))?;
+    let morale_core_json =
+        serde_json::to_string(&p.morale_core).map_err(|e| format!("JSON error: {}", e))?;
     let position_str = format!("{:?}", p.position);
     let natural_position_str = format!("{:?}", p.natural_position);
     let alt_positions_json =
         serde_json::to_string(&p.alternate_positions).map_err(|e| format!("JSON error: {}", e))?;
+    let footedness_str = format!("{:?}", p.footedness);
     let training_focus_str: Option<String> = p.training_focus.as_ref().map(|f| format!("{:?}", f));
 
     conn.execute(
@@ -29,8 +32,8 @@ pub fn upsert_player(conn: &Connection, p: &Player) -> Result<(), String> {
           attributes, condition, morale, injury, team_id, traits,
           contract_end, wage, market_value, stats, career,
           transfer_listed, loan_listed, transfer_offers, alternate_positions,
-          natural_position, training_focus, match_stats)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+          natural_position, training_focus, match_stats, morale_core, footedness, weak_foot, fitness)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
         params![
             p.id,
             p.match_name,
@@ -56,6 +59,10 @@ pub fn upsert_player(conn: &Connection, p: &Player) -> Result<(), String> {
             natural_position_str,
             training_focus_str,
             match_stats_json,
+            morale_core_json,
+            footedness_str,
+            p.weak_foot,
+            p.fitness,
         ],
     )
     .map_err(|e| format!("Failed to upsert player: {}", e))?;
@@ -76,7 +83,28 @@ fn parse_position(s: &str) -> Position {
         "Defender" => Position::Defender,
         "Midfielder" => Position::Midfielder,
         "Forward" => Position::Forward,
+        "RightBack" => Position::RightBack,
+        "CenterBack" => Position::CenterBack,
+        "LeftBack" => Position::LeftBack,
+        "RightWingBack" => Position::RightWingBack,
+        "LeftWingBack" => Position::LeftWingBack,
+        "DefensiveMidfielder" => Position::DefensiveMidfielder,
+        "CentralMidfielder" => Position::CentralMidfielder,
+        "AttackingMidfielder" => Position::AttackingMidfielder,
+        "RightMidfielder" => Position::RightMidfielder,
+        "LeftMidfielder" => Position::LeftMidfielder,
+        "RightWinger" => Position::RightWinger,
+        "LeftWinger" => Position::LeftWinger,
+        "Striker" => Position::Striker,
         _ => Position::Midfielder,
+    }
+}
+
+fn parse_footedness(s: &str) -> Footedness {
+    match s {
+        "Left" => Footedness::Left,
+        "Both" => Footedness::Both,
+        _ => Footedness::Right,
     }
 }
 
@@ -100,7 +128,7 @@ pub fn load_all_players(conn: &Connection) -> Result<Vec<Player>, String> {
                     attributes, condition, morale, injury, team_id, traits,
                     contract_end, wage, market_value, stats, career,
                     transfer_listed, loan_listed, transfer_offers, alternate_positions,
-                    natural_position, training_focus, match_stats
+                    natural_position, training_focus, match_stats, morale_core, footedness, weak_foot, fitness
              FROM players",
         )
         .map_err(|e| format!("Failed to prepare players query: {}", e))?;
@@ -124,7 +152,7 @@ pub fn load_players_by_team(conn: &Connection, team_id: &str) -> Result<Vec<Play
                     attributes, condition, morale, injury, team_id, traits,
                     contract_end, wage, market_value, stats, career,
                     transfer_listed, loan_listed, transfer_offers, alternate_positions,
-                    natural_position, training_focus, match_stats
+                    natural_position, training_focus, match_stats, morale_core, footedness, weak_foot, fitness
              FROM players WHERE team_id = ?1",
         )
         .map_err(|e| format!("Failed to prepare players query: {}", e))?;
@@ -152,6 +180,10 @@ fn row_to_player(row: &rusqlite::Row) -> rusqlite::Result<Player> {
     let natural_position_str: String = row.get(21)?;
     let training_focus_str: Option<String> = row.get(22)?;
     let match_stats_json: String = row.get(23)?;
+    let morale_core_json: String = row.get(24)?;
+    let footedness_str: String = row.get(25)?;
+    let weak_foot: u8 = row.get(26)?;
+    let fitness: u8 = row.get(27).unwrap_or(75); // default 75 for saves before V14
     let transfer_listed_int: i32 = row.get(17)?;
     let loan_listed_int: i32 = row.get(18)?;
     let market_value_i64: i64 = row.get(14)?;
@@ -172,6 +204,8 @@ fn row_to_player(row: &rusqlite::Row) -> rusqlite::Result<Player> {
         position,
         natural_position,
         alternate_positions: serde_json::from_str(&alt_positions_json).unwrap_or_default(),
+        footedness: parse_footedness(&footedness_str),
+        weak_foot,
         attributes: serde_json::from_str(&attrs_json).unwrap_or(PlayerAttributes {
             pace: 50,
             stamina: 50,
@@ -195,6 +229,7 @@ fn row_to_player(row: &rusqlite::Row) -> rusqlite::Result<Player> {
         }),
         condition: row.get(7)?,
         morale: row.get(8)?,
+        fitness,
         injury: injury_json.and_then(|j| serde_json::from_str(&j).ok()),
         team_id: row.get(10)?,
         traits: serde_json::from_str(&traits_json).unwrap_or_default(),
@@ -208,6 +243,7 @@ fn row_to_player(row: &rusqlite::Row) -> rusqlite::Result<Player> {
         transfer_listed: transfer_listed_int != 0,
         loan_listed: loan_listed_int != 0,
         transfer_offers: serde_json::from_str(&offers_json).unwrap_or_default(),
+        morale_core: serde_json::from_str(&morale_core_json).unwrap_or_default(),
     })
 }
 
@@ -215,7 +251,9 @@ fn row_to_player(row: &rusqlite::Row) -> rusqlite::Result<Player> {
 mod tests {
     use super::*;
     use crate::game_database::GameDatabase;
-    use domain::player::{Injury, PlayerMatchStatsEntry};
+    use domain::player::{
+        Injury, PlayerIssue, PlayerIssueCategory, PlayerMatchStatsEntry, PlayerMoraleCore,
+    };
 
     fn test_db() -> GameDatabase {
         GameDatabase::open_in_memory().unwrap()
@@ -308,14 +346,17 @@ mod tests {
     fn test_player_alternate_positions_roundtrip() {
         let db = test_db();
         let mut player = sample_player("p-001", Some("team-001"));
-        player.alternate_positions = vec![Position::Defender, Position::Forward];
+        player.alternate_positions = vec![Position::DefensiveMidfielder, Position::Striker];
 
         upsert_player(db.conn(), &player).unwrap();
         let loaded = load_all_players(db.conn()).unwrap();
 
         assert_eq!(loaded[0].alternate_positions.len(), 2);
-        assert_eq!(loaded[0].alternate_positions[0], Position::Defender);
-        assert_eq!(loaded[0].alternate_positions[1], Position::Forward);
+        assert_eq!(
+            loaded[0].alternate_positions[0],
+            Position::DefensiveMidfielder
+        );
+        assert_eq!(loaded[0].alternate_positions[1], Position::Striker);
     }
 
     #[test]
@@ -424,5 +465,85 @@ mod tests {
         assert_eq!(loaded[0].match_stats.len(), 1);
         assert_eq!(loaded[0].match_stats[0].fixture_id, "fix-1");
         assert_eq!(loaded[0].match_stats[0].shots, 5);
+    }
+
+    #[test]
+    fn test_player_morale_core_roundtrip() {
+        let db = test_db();
+        let mut player = sample_player("p-001", Some("team-001"));
+        player.morale_core = PlayerMoraleCore {
+            manager_trust: 63,
+            unresolved_issue: Some(PlayerIssue {
+                category: PlayerIssueCategory::PlayingTime,
+                severity: 55,
+            }),
+            recent_treatment: None,
+            pending_promise: None,
+            talk_cooldown_until: None,
+            renewal_state: None,
+        };
+
+        upsert_player(db.conn(), &player).unwrap();
+        let loaded = load_all_players(db.conn()).unwrap();
+
+        assert_eq!(loaded[0].morale_core.manager_trust, 63);
+        assert_eq!(
+            loaded[0]
+                .morale_core
+                .unresolved_issue
+                .as_ref()
+                .map(|issue| &issue.category),
+            Some(&PlayerIssueCategory::PlayingTime)
+        );
+    }
+
+    #[test]
+    fn test_player_granular_identity_roundtrip() {
+        let db = test_db();
+        let mut player = sample_player("p-identity", Some("team-001"));
+        player.natural_position = Position::LeftBack;
+        player.alternate_positions = vec![Position::LeftWingBack, Position::CenterBack];
+        player.footedness = Footedness::Left;
+        player.weak_foot = 3;
+
+        upsert_player(db.conn(), &player).unwrap();
+        let loaded = load_all_players(db.conn()).unwrap();
+
+        assert_eq!(loaded[0].natural_position, Position::LeftBack);
+        assert_eq!(
+            loaded[0].alternate_positions,
+            vec![Position::LeftWingBack, Position::CenterBack]
+        );
+        assert_eq!(loaded[0].footedness, Footedness::Left);
+        assert_eq!(loaded[0].weak_foot, 3);
+    }
+
+    #[test]
+    fn test_player_fitness_roundtrip() {
+        let db = test_db();
+        let mut player = sample_player("p-001", None);
+        player.fitness = 88;
+
+        upsert_player(db.conn(), &player).unwrap();
+        let loaded = load_all_players(db.conn()).unwrap();
+
+        assert_eq!(
+            loaded[0].fitness, 88,
+            "Fitness should round-trip through DB"
+        );
+    }
+
+    #[test]
+    fn test_player_fitness_default_on_new() {
+        let db = test_db();
+        let player = sample_player("p-001", None);
+        assert_eq!(
+            player.fitness, 75,
+            "New player should start with fitness=75"
+        );
+
+        upsert_player(db.conn(), &player).unwrap();
+        let loaded = load_all_players(db.conn()).unwrap();
+        assert_eq!(loaded[0].fitness, 75);
     }
 }

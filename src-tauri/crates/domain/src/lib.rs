@@ -1,7 +1,9 @@
 pub mod league;
 pub mod manager;
 pub mod message;
+pub mod negotiation;
 pub mod news;
 pub mod player;
+pub mod season;
 pub mod staff;
 pub mod team;

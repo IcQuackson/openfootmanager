@@ -1,9 +1,180 @@
 use log::info;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use crate::commands::round_summary::{build_round_summary_dto, RoundSummaryDto};
+use ofm_core::contracts::contract_warning_stage;
 use ofm_core::game::Game;
 use ofm_core::live_match_manager::{self, MatchMode};
+use ofm_core::player_rating::{effective_rating_for_assignment, formation_slots, natural_ovr};
 use ofm_core::state::StateManager;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdvanceTimeWithModeResponse {
+    pub action: String,
+    pub game: Option<Game>,
+    pub snapshot: Option<engine::MatchSnapshot>,
+    pub fixture_index: Option<usize>,
+    pub mode: Option<String>,
+    pub round_summary: Option<RoundSummaryDto>,
+}
+
+fn round_context_for_today(
+    game: &Game,
+    today: &str,
+) -> Option<(u32, Vec<domain::league::StandingEntry>)> {
+    let league = game.league.as_ref()?;
+    let matchday = league
+        .fixtures
+        .iter()
+        .find(|fixture| fixture.date == today)
+        .map(|fixture| fixture.matchday)?;
+
+    Some((matchday, league.standings.clone()))
+}
+
+fn scheduled_user_fixture_index(game: &Game, today: &str) -> Option<usize> {
+    let user_team_id = game.manager.team_id.as_ref()?;
+    let league = game.league.as_ref()?;
+
+    league
+        .fixtures
+        .iter()
+        .enumerate()
+        .find_map(|(index, fixture)| {
+            if fixture.date == today
+                && fixture.status == domain::league::FixtureStatus::Scheduled
+                && (fixture.home_team_id == *user_team_id || fixture.away_team_id == *user_team_id)
+            {
+                Some(index)
+            } else {
+                None
+            }
+        })
+}
+
+fn advance_time_with_mode_internal(
+    state: &StateManager,
+    mode: &str,
+) -> Result<AdvanceTimeWithModeResponse, String> {
+    info!("[cmd] advance_time_with_mode: mode={}", mode);
+    let mut game = state
+        .get_game(|g| g.clone())
+        .ok_or("No active game session")?;
+
+    let today = game.clock.current_date.format("%Y-%m-%d").to_string();
+    let round_context = round_context_for_today(&game, &today);
+    let user_fixture_idx = scheduled_user_fixture_index(&game, &today);
+
+    info!(
+        "[cmd] advance_time_with_mode: date={}, user_team_id={:?}, user_fixture_idx={:?}",
+        today, game.manager.team_id, user_fixture_idx
+    );
+
+    match (mode, user_fixture_idx) {
+        ("live" | "spectator", Some(idx)) => {
+            let match_mode = if mode == "live" {
+                MatchMode::Live
+            } else {
+                MatchMode::Spectator
+            };
+            let session = live_match_manager::create_live_match(&game, idx, match_mode, false)?;
+            let snapshot = session.snapshot();
+            info!(
+                "[cmd] advance_time_with_mode: live_match fixture_idx={}, phase={:?}, home_team={}, away_team={}",
+                idx,
+                snapshot.phase,
+                snapshot.home_team.name,
+                snapshot.away_team.name
+            );
+            state.set_live_match(session);
+
+            ofm_core::turn::simulate_other_matches(&mut game, &today, Some(idx));
+            let round_summary =
+                round_context
+                    .as_ref()
+                    .and_then(|(matchday, previous_standings)| {
+                        build_round_summary_dto(&game, *matchday, previous_standings)
+                    });
+            state.set_game(game);
+
+            Ok(AdvanceTimeWithModeResponse {
+                action: "live_match".to_string(),
+                game: None,
+                snapshot: Some(snapshot),
+                fixture_index: Some(idx),
+                mode: Some(mode.to_string()),
+                round_summary,
+            })
+        }
+        ("delegate", Some(idx)) => {
+            info!(
+                "[cmd] advance_time_with_mode: delegate fixture_idx={}, date={}",
+                idx, today
+            );
+            let mut session =
+                live_match_manager::create_live_match(&game, idx, MatchMode::Instant, false)?;
+            session.user_side = None;
+            session.run_to_completion();
+
+            let home_team_id = session.home_team_id.clone();
+            let away_team_id = session.away_team_id.clone();
+            let report = session.match_state.into_report();
+
+            ofm_core::turn::simulate_other_matches(&mut game, &today, Some(idx));
+
+            ofm_core::turn::apply_match_report(
+                &mut game,
+                idx,
+                &home_team_id,
+                &away_team_id,
+                &report,
+            );
+
+            let round_summary =
+                round_context
+                    .as_ref()
+                    .and_then(|(matchday, previous_standings)| {
+                        build_round_summary_dto(&game, *matchday, previous_standings)
+                    });
+
+            ofm_core::turn::finish_live_match_day(&mut game);
+            state.set_game(game.clone());
+
+            Ok(AdvanceTimeWithModeResponse {
+                action: "advanced".to_string(),
+                game: Some(game),
+                snapshot: None,
+                fixture_index: None,
+                mode: None,
+                round_summary,
+            })
+        }
+        _ => {
+            info!(
+                "[cmd] advance_time_with_mode: normal_advance date={}, mode={}",
+                today, mode
+            );
+            ofm_core::turn::process_day(&mut game);
+            let round_summary =
+                round_context
+                    .as_ref()
+                    .and_then(|(matchday, previous_standings)| {
+                        build_round_summary_dto(&game, *matchday, previous_standings)
+                    });
+            state.set_game(game.clone());
+
+            Ok(AdvanceTimeWithModeResponse {
+                action: "advanced".to_string(),
+                game: Some(game),
+                snapshot: None,
+                fixture_index: None,
+                mode: None,
+                round_summary,
+            })
+        }
+    }
+}
 
 fn user_team_context<'a>(
     game: &'a Game,
@@ -26,42 +197,6 @@ fn build_blocker(id: &str, severity: &str, text: String, tab: &str) -> serde_jso
         "text": text,
         "tab": tab
     })
-}
-
-fn parse_formation_slots(formation: &str) -> (usize, usize, usize) {
-    let parts: Vec<usize> = formation
-        .split('-')
-        .filter_map(|part| part.parse().ok())
-        .collect();
-
-    match parts.len() {
-        4 => (parts[0], parts[1] + parts[2], parts[3]),
-        3 => (parts[0], parts[1], parts[2]),
-        _ => (4, 4, 2),
-    }
-}
-
-fn player_overall(player: &domain::player::Player) -> u32 {
-    let attrs = &player.attributes;
-    u32::from(attrs.pace)
-        + u32::from(attrs.stamina)
-        + u32::from(attrs.strength)
-        + u32::from(attrs.agility)
-        + u32::from(attrs.passing)
-        + u32::from(attrs.shooting)
-        + u32::from(attrs.tackling)
-        + u32::from(attrs.dribbling)
-        + u32::from(attrs.defending)
-        + u32::from(attrs.positioning)
-        + u32::from(attrs.vision)
-        + u32::from(attrs.decisions)
-        + u32::from(attrs.composure)
-        + u32::from(attrs.aggression)
-        + u32::from(attrs.teamwork)
-        + u32::from(attrs.leadership)
-        + u32::from(attrs.handling)
-        + u32::from(attrs.reflexes)
-        + u32::from(attrs.aerial)
 }
 
 fn build_effective_healthy_starting_xi_ids(
@@ -92,53 +227,62 @@ fn build_effective_healthy_starting_xi_ids(
         .copied()
         .filter(|player| !used.contains(&player.id))
         .collect();
-    remaining_players.sort_by(|a, b| player_overall(b).cmp(&player_overall(a)));
+    remaining_players.sort_by(|a, b| {
+        natural_ovr(b)
+            .partial_cmp(&natural_ovr(a))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let slots = formation_slots(formation);
 
     if valid_saved_ids.len() >= 8 {
         let mut xi_ids = valid_saved_ids;
-        xi_ids.extend(
-            remaining_players
-                .into_iter()
-                .map(|player| player.id.clone()),
-        );
+        while xi_ids.len() < 11 {
+            let slot = slots.get(xi_ids.len());
+            let best_index = remaining_players
+                .iter()
+                .enumerate()
+                .max_by(|(_, left), (_, right)| {
+                    let left_rating = slot.map_or_else(
+                        || natural_ovr(left),
+                        |slot| effective_rating_for_assignment(left, slot),
+                    );
+                    let right_rating = slot.map_or_else(
+                        || natural_ovr(right),
+                        |slot| effective_rating_for_assignment(right, slot),
+                    );
+                    left_rating
+                        .partial_cmp(&right_rating)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .map(|(index, _)| index);
+
+            let Some(best_index) = best_index else {
+                break;
+            };
+
+            let player = remaining_players.remove(best_index);
+            xi_ids.push(player.id.clone());
+        }
         xi_ids.truncate(11);
         return xi_ids;
     }
-
-    let (defenders_needed, midfielders_needed, forwards_needed) = parse_formation_slots(formation);
     let mut xi_ids = Vec::new();
 
-    let mut pick_position = |position: domain::player::Position, count: usize| {
-        let mut candidates: Vec<&domain::player::Player> = healthy_roster
+    for slot in slots.iter().take(11) {
+        let best_player = healthy_roster
             .iter()
             .copied()
-            .filter(|player| player.position == position && !used.contains(&player.id))
-            .collect();
-        candidates.sort_by(|a, b| player_overall(b).cmp(&player_overall(a)));
+            .filter(|player| !used.contains(&player.id))
+            .max_by(|left, right| {
+                effective_rating_for_assignment(left, slot)
+                    .partial_cmp(&effective_rating_for_assignment(right, slot))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
 
-        for player in candidates.into_iter().take(count) {
-            if used.insert(player.id.clone()) {
-                xi_ids.push(player.id.clone());
-            }
-        }
-    };
-
-    pick_position(domain::player::Position::Goalkeeper, 1);
-    pick_position(domain::player::Position::Defender, defenders_needed);
-    pick_position(domain::player::Position::Midfielder, midfielders_needed);
-    pick_position(domain::player::Position::Forward, forwards_needed);
-
-    let mut fallback_players: Vec<&domain::player::Player> = healthy_roster
-        .iter()
-        .copied()
-        .filter(|player| !used.contains(&player.id))
-        .collect();
-    fallback_players.sort_by(|a, b| player_overall(b).cmp(&player_overall(a)));
-
-    for player in fallback_players {
-        if xi_ids.len() >= 11 {
+        let Some(player) = best_player else {
             break;
-        }
+        };
 
         if used.insert(player.id.clone()) {
             xi_ids.push(player.id.clone());
@@ -214,6 +358,89 @@ fn urgent_unread_messages_blocker(game: &Game) -> Option<serde_json::Value> {
     })
 }
 
+fn key_contract_risk_blocker(
+    roster: &[&domain::player::Player],
+    effective_healthy_xi_ids: &[String],
+    current_date: chrono::NaiveDate,
+) -> Option<serde_json::Value> {
+    let effective_xi_id_set: std::collections::HashSet<&str> = effective_healthy_xi_ids
+        .iter()
+        .map(String::as_str)
+        .collect();
+
+    let mut effective_xi_players: Vec<&domain::player::Player> = roster
+        .iter()
+        .copied()
+        .filter(|player| effective_xi_id_set.contains(player.id.as_str()))
+        .collect();
+    effective_xi_players.sort_by(|a, b| {
+        natural_ovr(b)
+            .partial_cmp(&natural_ovr(a))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let risky_key_players: Vec<&str> = effective_xi_players
+        .into_iter()
+        .take(3)
+        .filter(|player| {
+            contract_warning_stage(player.contract_end.as_deref(), current_date).is_some()
+        })
+        .map(|player| player.match_name.as_str())
+        .collect();
+
+    (!risky_key_players.is_empty()).then(|| {
+        build_blocker(
+            "key_contract_risk",
+            "warn",
+            format!(
+                "Key player contract risk in squad planning: {}",
+                risky_key_players.join(", ")
+            ),
+            "Squad",
+        )
+    })
+}
+
+fn contract_wage_risk_blocker(
+    team: &domain::team::Team,
+    roster: &[&domain::player::Player],
+    current_date: chrono::NaiveDate,
+) -> Option<serde_json::Value> {
+    let at_risk_wages: u32 = roster
+        .iter()
+        .copied()
+        .filter(|player| {
+            contract_warning_stage(player.contract_end.as_deref(), current_date).is_some()
+        })
+        .map(|player| player.wage)
+        .sum();
+
+    let wage_budget = team.wage_budget.max(0) as u32;
+    (wage_budget > 0 && at_risk_wages > wage_budget).then(|| {
+        build_blocker(
+            "contract_wage_risk",
+            "warn",
+            format!(
+                "{} of wages are tied to at-risk contracts — review your wage budget",
+                at_risk_wages
+            ),
+            "Finances",
+        )
+    })
+}
+
+/// Advance time with a specific match mode.
+/// mode: "live" | "spectator" | "delegate" | "instant"
+/// If mode is "live" or "spectator" and there's a user match today,
+/// it sets up the live match session instead of auto-simulating.
+#[tauri::command]
+pub fn advance_time_with_mode(
+    state: State<'_, StateManager>,
+    mode: String,
+) -> Result<AdvanceTimeWithModeResponse, String> {
+    advance_time_with_mode_internal(&state, &mode)
+}
+
 #[tauri::command]
 pub fn advance_time(state: State<'_, StateManager>) -> Result<Game, String> {
     let mut current_game = state
@@ -224,14 +451,12 @@ pub fn advance_time(state: State<'_, StateManager>) -> Result<Game, String> {
         "[cmd] advance_time: date={}",
         current_game.clock.current_date.format("%Y-%m-%d")
     );
-    // Process a full day: matchday simulation, training, messages, then advance clock
     ofm_core::turn::process_day(&mut current_game);
 
     state.set_game(current_game.clone());
     Ok(current_game)
 }
 
-/// Compute blocking actions for the current game state.
 pub fn compute_blocking_actions(game: &Game) -> Vec<serde_json::Value> {
     let mut blockers = Vec::new();
     let (team, roster) = match user_team_context(game) {
@@ -242,20 +467,28 @@ pub fn compute_blocking_actions(game: &Game) -> Vec<serde_json::Value> {
         }
     };
     let saved_xi_ids = &team.starting_xi_ids;
+    let current_date = game.clock.current_date.date_naive();
     let effective_healthy_xi_ids =
         build_effective_healthy_starting_xi_ids(saved_xi_ids, &roster, &team.formation);
 
-    // Check for injured players in XI
     if let Some(blocker) = injured_starting_xi_blocker(saved_xi_ids, &roster) {
         blockers.push(blocker);
     }
 
-    // Check if XI is incomplete (fewer than 11 healthy players)
     if let Some(blocker) = incomplete_starting_xi_blocker(&effective_healthy_xi_ids, &roster) {
         blockers.push(blocker);
     }
 
-    // Check for unresolved urgent messages
+    if let Some(blocker) =
+        key_contract_risk_blocker(&roster, &effective_healthy_xi_ids, current_date)
+    {
+        blockers.push(blocker);
+    }
+
+    if let Some(blocker) = contract_wage_risk_blocker(team, &roster, current_date) {
+        blockers.push(blocker);
+    }
+
     if let Some(blocker) = urgent_unread_messages_blocker(game) {
         blockers.push(blocker);
     }
@@ -278,8 +511,6 @@ pub fn compute_blocking_actions(game: &Game) -> Vec<serde_json::Value> {
     blockers
 }
 
-/// Check for blocking actions that should be resolved before advancing.
-/// Returns a JSON array of blocking issues.
 #[tauri::command]
 pub fn check_blocking_actions(state: State<'_, StateManager>) -> Result<serde_json::Value, String> {
     log::debug!("[cmd] check_blocking_actions");
@@ -296,9 +527,6 @@ pub fn check_blocking_actions(state: State<'_, StateManager>) -> Result<serde_js
     Ok(serde_json::json!(blockers))
 }
 
-/// Skip forward until the day before the next match for the user's team.
-/// Processes each intermediate day normally (training, recovery, messages).
-/// If blocking actions arise mid-skip, stops early and returns a "blocked" reason.
 #[tauri::command]
 pub fn skip_to_match_day(state: State<'_, StateManager>) -> Result<serde_json::Value, String> {
     info!("[cmd] skip_to_match_day");
@@ -313,7 +541,6 @@ pub fn skip_to_match_day(state: State<'_, StateManager>) -> Result<serde_json::V
         user_team_id
     );
 
-    // Advance up to 60 days (safety limit)
     let mut days_skipped = 0u32;
     loop {
         if days_skipped >= 60 {
@@ -322,17 +549,16 @@ pub fn skip_to_match_day(state: State<'_, StateManager>) -> Result<serde_json::V
 
         let today = game.clock.current_date.format("%Y-%m-%d").to_string();
 
-        // Check if user has a match today
         let has_match = game.league.as_ref().is_some_and(|league| {
-            league.fixtures.iter().any(|f| {
-                f.date == today
-                    && f.status == domain::league::FixtureStatus::Scheduled
-                    && (f.home_team_id == user_team_id || f.away_team_id == user_team_id)
+            league.fixtures.iter().any(|fixture| {
+                fixture.date == today
+                    && fixture.status == domain::league::FixtureStatus::Scheduled
+                    && (fixture.home_team_id == user_team_id
+                        || fixture.away_team_id == user_team_id)
             })
         });
 
         if has_match {
-            // We've reached match day — stop here (don't process the match)
             info!(
                 "[cmd] skip_to_match_day: found match_day={}, days_skipped={}",
                 today, days_skipped
@@ -340,11 +566,9 @@ pub fn skip_to_match_day(state: State<'_, StateManager>) -> Result<serde_json::V
             break;
         }
 
-        // Process this non-match day normally
         ofm_core::turn::process_day(&mut game);
         days_skipped += 1;
 
-        // After processing, check if blocking actions arose
         let blockers = compute_blocking_actions(&game);
         if !blockers.is_empty() {
             info!(
@@ -376,138 +600,18 @@ pub fn skip_to_match_day(state: State<'_, StateManager>) -> Result<serde_json::V
     }))
 }
 
-/// Advance time with a specific match mode.
-/// mode: "live" | "spectator" | "delegate" | "instant"
-/// If mode is "live" or "spectator" and there's a user match today,
-/// it sets up the live match session instead of auto-simulating.
-#[tauri::command]
-pub fn advance_time_with_mode(
-    state: State<'_, StateManager>,
-    mode: String,
-) -> Result<serde_json::Value, String> {
-    info!("[cmd] advance_time_with_mode: mode={}", mode);
-    let mut game = state
-        .get_game(|g| g.clone())
-        .ok_or("No active game session")?;
-
-    let today = game.clock.current_date.format("%Y-%m-%d").to_string();
-    let user_team_id = game.manager.team_id.clone();
-
-    // Check if user has a match today
-    let user_fixture_idx = user_team_id.as_ref().and_then(|utid| {
-        game.league.as_ref().and_then(|league| {
-            league.fixtures.iter().enumerate().find_map(|(i, f)| {
-                if f.date == today
-                    && f.status == domain::league::FixtureStatus::Scheduled
-                    && (f.home_team_id == *utid || f.away_team_id == *utid)
-                {
-                    Some(i)
-                } else {
-                    None
-                }
-            })
-        })
-    });
-
-    info!(
-        "[cmd] advance_time_with_mode: date={}, user_team_id={:?}, user_fixture_idx={:?}",
-        today, user_team_id, user_fixture_idx
-    );
-
-    match (mode.as_str(), user_fixture_idx) {
-        ("live" | "spectator", Some(idx)) => {
-            // Set up live match — don't advance the day yet
-            let match_mode = if mode == "live" {
-                MatchMode::Live
-            } else {
-                MatchMode::Spectator
-            };
-            let session = live_match_manager::create_live_match(&game, idx, match_mode, false)?;
-            let snapshot = session.snapshot();
-            info!(
-                "[cmd] advance_time_with_mode: live_match fixture_idx={}, phase={:?}, home_team={}, away_team={}",
-                idx,
-                snapshot.phase,
-                snapshot.home_team.name,
-                snapshot.away_team.name
-            );
-            state.set_live_match(session);
-
-            // Simulate all OTHER matches for today instantly
-            ofm_core::turn::simulate_other_matches(&mut game, &today, Some(idx));
-            state.set_game(game);
-
-            Ok(serde_json::json!({
-                "action": "live_match",
-                "fixture_index": idx,
-                "snapshot": snapshot,
-                "mode": mode
-            }))
-        }
-        ("delegate", Some(idx)) => {
-            info!(
-                "[cmd] advance_time_with_mode: delegate fixture_idx={}, date={}",
-                idx, today
-            );
-            // Delegate: AI controls user's team. Create session, run to completion, apply report.
-            let mut session =
-                live_match_manager::create_live_match(&game, idx, MatchMode::Instant, false)?;
-            // AI controls BOTH sides (user_side is None for Instant mode auto-AI)
-            session.user_side = None;
-            session.run_to_completion();
-
-            let home_team_id = session.home_team_id.clone();
-            let away_team_id = session.away_team_id.clone();
-            let report = session.match_state.into_report();
-
-            // Simulate all other matches for today
-            ofm_core::turn::simulate_other_matches(&mut game, &today, Some(idx));
-
-            // Apply user's delegated match report
-            ofm_core::turn::apply_match_report(
-                &mut game,
-                idx,
-                &home_team_id,
-                &away_team_id,
-                &report,
-            );
-
-            // Complete the day
-            ofm_core::turn::finish_live_match_day(&mut game);
-            state.set_game(game.clone());
-
-            Ok(serde_json::json!({
-                "action": "advanced",
-                "game": game
-            }))
-        }
-        _ => {
-            info!(
-                "[cmd] advance_time_with_mode: normal_advance date={}, mode={}",
-                today, mode
-            );
-            // Normal advance: simulate everything including user match
-            ofm_core::turn::process_day(&mut game);
-            state.set_game(game.clone());
-
-            Ok(serde_json::json!({
-                "action": "advanced",
-                "game": game
-            }))
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::compute_blocking_actions;
+    use super::{advance_time_with_mode_internal, compute_blocking_actions};
     use chrono::{TimeZone, Utc};
+    use domain::league::{Fixture, FixtureCompetition, FixtureStatus};
     use domain::manager::Manager;
     use domain::message::{InboxMessage, MessagePriority};
     use domain::player::{Injury, Player, PlayerAttributes, Position};
     use domain::team::Team;
     use ofm_core::clock::GameClock;
     use ofm_core::game::Game;
+    use ofm_core::state::StateManager;
     use serde_json::Value;
 
     fn default_attrs() -> PlayerAttributes {
@@ -726,5 +830,247 @@ mod tests {
             urgent.get("text").and_then(Value::as_str),
             Some("2 urgent unread message(s)")
         );
+    }
+
+    #[test]
+    fn key_player_contract_risk_triggers_squad_blocker() {
+        let mut game = make_game(11);
+
+        let first_key_player = game
+            .players
+            .iter_mut()
+            .find(|player| player.id == "p10")
+            .unwrap();
+        first_key_player.contract_end = Some("2025-08-01".to_string());
+        first_key_player.wage = 35_000;
+        first_key_player.attributes.pace = 92;
+        first_key_player.attributes.shooting = 94;
+        first_key_player.attributes.dribbling = 90;
+
+        let second_key_player = game
+            .players
+            .iter_mut()
+            .find(|player| player.id == "p11")
+            .unwrap();
+        second_key_player.contract_end = Some("2025-09-01".to_string());
+        second_key_player.wage = 25_000;
+        second_key_player.attributes.pace = 90;
+        second_key_player.attributes.shooting = 91;
+        second_key_player.attributes.dribbling = 89;
+
+        let blockers = compute_blocking_actions(&game);
+
+        let contract_blocker = blocker_by_id(&blockers, "key_contract_risk").unwrap();
+        assert_eq!(
+            contract_blocker.get("severity").and_then(Value::as_str),
+            Some("warn")
+        );
+        assert_eq!(
+            contract_blocker.get("tab").and_then(Value::as_str),
+            Some("Squad")
+        );
+
+        let text = contract_blocker
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap();
+        assert!(text.contains("Player 10"));
+        assert!(text.contains("Player 11"));
+    }
+
+    #[test]
+    fn large_at_risk_wage_share_triggers_finance_blocker() {
+        let mut game = make_game(11);
+        game.teams[0].wage_budget = 50_000;
+
+        let first_risk = game
+            .players
+            .iter_mut()
+            .find(|player| player.id == "p10")
+            .unwrap();
+        first_risk.contract_end = Some("2025-08-01".to_string());
+        first_risk.wage = 35_000;
+
+        let second_risk = game
+            .players
+            .iter_mut()
+            .find(|player| player.id == "p11")
+            .unwrap();
+        second_risk.contract_end = Some("2025-09-01".to_string());
+        second_risk.wage = 25_000;
+
+        let blockers = compute_blocking_actions(&game);
+
+        let finance_blocker = blocker_by_id(&blockers, "contract_wage_risk").unwrap();
+        assert_eq!(
+            finance_blocker.get("severity").and_then(Value::as_str),
+            Some("warn")
+        );
+        assert_eq!(
+            finance_blocker.get("tab").and_then(Value::as_str),
+            Some("Finances")
+        );
+
+        let text = finance_blocker.get("text").and_then(Value::as_str).unwrap();
+        assert!(text.contains("60000"));
+        assert!(text.contains("wage budget"));
+    }
+
+    fn make_round_summary_game() -> Game {
+        let clock = GameClock::new(Utc.with_ymd_and_hms(2025, 6, 15, 12, 0, 0).unwrap());
+        let mut manager = Manager::new(
+            "mgr1".to_string(),
+            "Alex".to_string(),
+            "Manager".to_string(),
+            "1980-01-01".to_string(),
+            "England".to_string(),
+        );
+        manager.hire("team1".to_string());
+
+        let teams = vec![
+            Team::new(
+                "team1".to_string(),
+                "Test FC".to_string(),
+                "TST".to_string(),
+                "England".to_string(),
+                "Testville".to_string(),
+                "Test Ground".to_string(),
+                20_000,
+            ),
+            Team::new(
+                "team2".to_string(),
+                "Rival FC".to_string(),
+                "RIV".to_string(),
+                "England".to_string(),
+                "Rivaltown".to_string(),
+                "Rival Ground".to_string(),
+                20_000,
+            ),
+            Team::new(
+                "team3".to_string(),
+                "Third FC".to_string(),
+                "THI".to_string(),
+                "England".to_string(),
+                "Thirdtown".to_string(),
+                "Third Ground".to_string(),
+                20_000,
+            ),
+            Team::new(
+                "team4".to_string(),
+                "Fourth FC".to_string(),
+                "FOU".to_string(),
+                "England".to_string(),
+                "Fourthtown".to_string(),
+                "Fourth Ground".to_string(),
+                20_000,
+            ),
+        ];
+
+        let mut players = Vec::new();
+        for (team_id, prefix) in [
+            ("team1", "a"),
+            ("team2", "b"),
+            ("team3", "c"),
+            ("team4", "d"),
+        ] {
+            players.push(make_player(
+                &format!("{}-gk", prefix),
+                &format!("{} GK", prefix),
+                team_id,
+                Position::Goalkeeper,
+            ));
+            for idx in 0..4 {
+                players.push(make_player(
+                    &format!("{}-def{}", prefix, idx),
+                    &format!("{} Def{}", prefix, idx),
+                    team_id,
+                    Position::Defender,
+                ));
+            }
+            for idx in 0..4 {
+                players.push(make_player(
+                    &format!("{}-mid{}", prefix, idx),
+                    &format!("{} Mid{}", prefix, idx),
+                    team_id,
+                    Position::Midfielder,
+                ));
+            }
+            for idx in 0..2 {
+                players.push(make_player(
+                    &format!("{}-fwd{}", prefix, idx),
+                    &format!("{} Fwd{}", prefix, idx),
+                    team_id,
+                    Position::Forward,
+                ));
+            }
+        }
+
+        let league = domain::league::League {
+            id: "league1".to_string(),
+            name: "Test League".to_string(),
+            season: 1,
+            fixtures: vec![
+                domain::league::Fixture {
+                    id: "fix1".to_string(),
+                    matchday: 1,
+                    date: "2025-06-15".to_string(),
+                    home_team_id: "team1".to_string(),
+                    away_team_id: "team2".to_string(),
+                    competition: FixtureCompetition::League,
+                    status: FixtureStatus::Scheduled,
+                    result: None,
+                },
+                Fixture {
+                    id: "fix2".to_string(),
+                    matchday: 1,
+                    date: "2025-06-15".to_string(),
+                    home_team_id: "team3".to_string(),
+                    away_team_id: "team4".to_string(),
+                    competition: FixtureCompetition::League,
+                    status: domain::league::FixtureStatus::Scheduled,
+                    result: None,
+                },
+            ],
+            standings: vec![
+                domain::league::StandingEntry::new("team1".to_string()),
+                domain::league::StandingEntry::new("team2".to_string()),
+                domain::league::StandingEntry::new("team3".to_string()),
+                domain::league::StandingEntry::new("team4".to_string()),
+            ],
+        };
+
+        let mut game = Game::new(clock, manager, teams, players, vec![], vec![]);
+        game.league = Some(league);
+        game
+    }
+
+    #[test]
+    fn advance_time_with_mode_live_returns_partial_round_summary() {
+        let state = StateManager::new();
+        state.set_game(make_round_summary_game());
+
+        let response =
+            advance_time_with_mode_internal(&state, "live").expect("live advance response");
+
+        assert_eq!(response.action, "live_match");
+        let round_summary = response.round_summary.expect("round summary");
+        assert!(!round_summary.is_complete);
+        assert_eq!(round_summary.pending_fixture_count, 1);
+        assert_eq!(round_summary.completed_results.len(), 1);
+    }
+
+    #[test]
+    fn advance_time_with_mode_delegate_returns_completed_round_summary() {
+        let state = StateManager::new();
+        state.set_game(make_round_summary_game());
+
+        let response =
+            advance_time_with_mode_internal(&state, "delegate").expect("delegate advance response");
+
+        assert_eq!(response.action, "advanced");
+        let round_summary = response.round_summary.expect("round summary");
+        assert!(round_summary.is_complete);
+        assert_eq!(round_summary.pending_fixture_count, 0);
+        assert_eq!(round_summary.completed_results.len(), 2);
     }
 }

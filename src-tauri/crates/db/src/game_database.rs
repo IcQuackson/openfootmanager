@@ -10,6 +10,105 @@ pub struct GameDatabase {
     path: Option<PathBuf>,
 }
 
+fn read_user_version(conn: &Connection) -> Result<i64, String> {
+    conn.pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(|e| format!("Failed to read schema version: {}", e))
+}
+
+fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, String> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({})", table))
+        .map_err(|e| format!("Failed to inspect {} schema: {}", table, e))?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| format!("Failed to inspect {} schema: {}", table, e))?;
+
+    for row in rows {
+        if row.map_err(|e| format!("Failed to read {} schema row: {}", table, e))? == column {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn ensure_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    migration_sql: &str,
+) -> Result<(), String> {
+    if has_column(conn, table, column)? {
+        return Ok(());
+    }
+
+    info!(
+        "[game_db] adding missing compatibility column {}.{}",
+        table, column
+    );
+    conn.execute_batch(migration_sql).map_err(|e| {
+        format!(
+            "Failed to add compatibility column {}.{}: {}",
+            table, column, e
+        )
+    })
+}
+
+fn reconcile_post_v6_schema(conn: &Connection) -> Result<(), String> {
+    ensure_column(
+        conn,
+        "players",
+        "match_stats",
+        include_str!("sql/v007_player_match_stats.sql"),
+    )?;
+    ensure_column(
+        conn,
+        "teams",
+        "financial_ledger",
+        include_str!("sql/v007_team_financial_ledger.sql"),
+    )?;
+    ensure_column(
+        conn,
+        "teams",
+        "sponsorship",
+        include_str!("sql/v008_team_sponsorship.sql"),
+    )?;
+    ensure_column(
+        conn,
+        "teams",
+        "facilities",
+        include_str!("sql/v009_team_facilities.sql"),
+    )?;
+    ensure_column(
+        conn,
+        "players",
+        "morale_core",
+        include_str!("sql/v010_player_morale_core.sql"),
+    )?;
+    ensure_column(
+        conn,
+        "players",
+        "footedness",
+        include_str!("sql/v011_player_footedness.sql"),
+    )?;
+    ensure_column(
+        conn,
+        "fixtures",
+        "competition",
+        include_str!("sql/v012_fixture_competition.sql"),
+    )?;
+    ensure_column(
+        conn,
+        "players",
+        "fitness",
+        include_str!("sql/v013_player_fitness.sql"),
+    )?;
+
+    conn.pragma_update(None, "user_version", MIGRATION_COUNT as i64)
+        .map_err(|e| format!("Failed to update schema version: {}", e))?;
+    Ok(())
+}
+
 impl GameDatabase {
     /// Open (or create) a game database at the given path and apply all migrations.
     pub fn open(path: &Path) -> Result<Self, String> {
@@ -19,11 +118,20 @@ impl GameDatabase {
             format!("Failed to open database: {}", e)
         })?;
 
-        let migrations = all_migrations();
-        migrations.to_latest(&mut conn).map_err(|e| {
-            error!("[game_db] migration failed for {:?}: {}", path, e);
-            format!("Database migration failed: {}", e)
-        })?;
+        let initial_version = read_user_version(&conn)?;
+        if initial_version > 6 {
+            info!(
+                "[game_db] reconciling divergent post-v6 schema at {:?} from version {}",
+                path, initial_version
+            );
+            reconcile_post_v6_schema(&conn)?;
+        } else {
+            let migrations = all_migrations();
+            migrations.to_latest(&mut conn).map_err(|e| {
+                error!("[game_db] migration failed for {:?}: {}", path, e);
+                format!("Database migration failed: {}", e)
+            })?;
+        }
 
         info!("[game_db] database ready at {:?}", path);
         Ok(Self {
@@ -61,9 +169,7 @@ impl GameDatabase {
 
     /// Get the current schema version (number of applied migrations).
     pub fn schema_version(&self) -> Result<i64, String> {
-        self.conn
-            .pragma_query_value(None, "user_version", |row| row.get(0))
-            .map_err(|e| format!("Failed to read schema version: {}", e))
+        read_user_version(&self.conn)
     }
 
     /// Validate that the database has the expected schema version.
@@ -83,6 +189,16 @@ impl GameDatabase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
+
+    fn apply_sql(conn: &Connection, sql: &str, version: i64) {
+        conn.execute_batch(sql).unwrap();
+        conn.pragma_update(None, "user_version", version).unwrap();
+    }
+
+    fn test_has_column(conn: &Connection, table: &str, column: &str) -> bool {
+        has_column(conn, table, column).unwrap()
+    }
 
     #[test]
     fn test_open_in_memory() {
@@ -155,5 +271,54 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM teams", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_open_repairs_release_lineage_schema() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("release_lineage.db");
+        let conn = Connection::open(&db_path).unwrap();
+
+        apply_sql(&conn, include_str!("sql/v001_initial_schema.sql"), 1);
+        apply_sql(&conn, include_str!("sql/v002_training_groups.sql"), 2);
+        apply_sql(&conn, include_str!("sql/v003_alternate_positions.sql"), 3);
+        apply_sql(&conn, include_str!("sql/v004_natural_position.sql"), 4);
+        apply_sql(&conn, include_str!("sql/v005_player_training_focus.sql"), 5);
+        apply_sql(&conn, include_str!("sql/v006_team_match_roles.sql"), 6);
+        apply_sql(&conn, include_str!("sql/v007_team_financial_ledger.sql"), 7);
+        apply_sql(&conn, include_str!("sql/v008_team_sponsorship.sql"), 8);
+        apply_sql(&conn, include_str!("sql/v009_team_facilities.sql"), 9);
+        apply_sql(&conn, include_str!("sql/v010_player_morale_core.sql"), 10);
+        apply_sql(&conn, include_str!("sql/v011_player_footedness.sql"), 11);
+        apply_sql(&conn, include_str!("sql/v012_fixture_competition.sql"), 12);
+        apply_sql(&conn, include_str!("sql/v013_player_fitness.sql"), 13);
+        drop(conn);
+
+        let db = GameDatabase::open(&db_path).unwrap();
+        assert_eq!(db.schema_version().unwrap(), MIGRATION_COUNT as i64);
+        assert!(test_has_column(db.conn(), "players", "match_stats"));
+        assert!(test_has_column(db.conn(), "teams", "financial_ledger"));
+    }
+
+    #[test]
+    fn test_open_repairs_custom_lineage_schema() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("custom_lineage.db");
+        let conn = Connection::open(&db_path).unwrap();
+
+        apply_sql(&conn, include_str!("sql/v001_initial_schema.sql"), 1);
+        apply_sql(&conn, include_str!("sql/v002_training_groups.sql"), 2);
+        apply_sql(&conn, include_str!("sql/v003_alternate_positions.sql"), 3);
+        apply_sql(&conn, include_str!("sql/v004_natural_position.sql"), 4);
+        apply_sql(&conn, include_str!("sql/v005_player_training_focus.sql"), 5);
+        apply_sql(&conn, include_str!("sql/v006_team_match_roles.sql"), 6);
+        apply_sql(&conn, include_str!("sql/v007_player_match_stats.sql"), 7);
+        drop(conn);
+
+        let db = GameDatabase::open(&db_path).unwrap();
+        assert_eq!(db.schema_version().unwrap(), MIGRATION_COUNT as i64);
+        assert!(test_has_column(db.conn(), "players", "match_stats"));
+        assert!(test_has_column(db.conn(), "teams", "financial_ledger"));
+        assert!(test_has_column(db.conn(), "players", "fitness"));
     }
 }

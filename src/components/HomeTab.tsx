@@ -1,9 +1,18 @@
 import { GameStateData, FixtureData } from "../store/gameStore";
 import { Card, CardHeader, CardBody, Badge, ProgressBar } from "./ui";
 import { getTeamName, calcOvr, formatDateShort } from "../lib/helpers";
+import { resolveSeasonContext } from "../lib/seasonContext";
 import NextMatchDisplay from "./NextMatchDisplay";
-import { resolveBoardObjective, resolveMessage } from "../utils/backendI18n";
-import { getOnboardingCompletionState } from "./HomeTab.helpers";
+import {
+  resolveBoardObjective,
+  resolveMessage,
+  resolveNewsArticle,
+} from "../utils/backendI18n";
+import {
+  getLeagueDigestArticles,
+  getNextOpponentWidgetData,
+  getOnboardingCompletionState,
+} from "./HomeTab.helpers";
 import { translatePositionAbbreviation } from "./SquadTab.helpers";
 import {
   Trophy,
@@ -22,6 +31,7 @@ import {
   Lightbulb,
   TrendingUp,
   TrendingDown,
+  CalendarClock,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -63,7 +73,12 @@ export default function HomeTab({
       : 0;
   const avgOvr =
     roster.length > 0
-      ? Math.round(roster.reduce((s, p) => s + calcOvr(p), 0) / roster.length)
+      ? Math.round(
+          roster.reduce(
+            (s, p) => s + calcOvr(p, p.natural_position || p.position),
+            0,
+          ) / roster.length,
+        )
       : 0;
   const exhaustedCount = roster.filter((p) => p.condition < 40).length;
   const resolveInjuryName = (injuryName: string): string => {
@@ -83,9 +98,38 @@ export default function HomeTab({
       );
     });
 
+  // Current date / season context
+  const lang = i18n.language;
+  const seasonContext = resolveSeasonContext(gameState);
+  const isPreseason = seasonContext.phase === "Preseason";
+  const seasonStartLabel = seasonContext.season_start
+    ? formatDateShort(seasonContext.season_start, lang)
+    : null;
+  const transferWindow = seasonContext.transfer_window;
+  const transferWindowVariant =
+    transferWindow.status === "DeadlineDay"
+      ? "danger"
+      : transferWindow.status === "Open"
+        ? "success"
+        : "neutral";
+  const transferWindowSummary =
+    transferWindow.status === "DeadlineDay"
+      ? t("season.windowClosesToday")
+      : transferWindow.status === "Open" &&
+          transferWindow.days_remaining !== null
+        ? t("season.windowClosesInDays", {
+            count: transferWindow.days_remaining,
+          })
+        : transferWindow.status === "Closed" &&
+            transferWindow.days_until_opens !== null
+          ? t("season.windowOpensInDays", {
+              count: transferWindow.days_until_opens,
+            })
+          : t("season.windowClosed");
+
   // League position
   const myStanding =
-    league && myTeam
+    !isPreseason && league && myTeam
       ? league.standings
           .sort(
             (a, b) =>
@@ -95,7 +139,7 @@ export default function HomeTab({
           .findIndex((s) => s.team_id === myTeam.id) + 1
       : null;
   const myStandingData =
-    league && myTeam
+    !isPreseason && league && myTeam
       ? league.standings.find((s) => s.team_id === myTeam.id)
       : null;
 
@@ -119,9 +163,6 @@ export default function HomeTab({
     recentResults.reverse();
   }
 
-  // Current date
-  const lang = i18n.language;
-
   // Training schedule
   const schedule = myTeam?.training_schedule || "Balanced";
   const schedIcons = SCHEDULE_ICONS[schedule] || SCHEDULE_ICONS.Balanced;
@@ -132,6 +173,9 @@ export default function HomeTab({
   const latestNews = (gameState.news || [])
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 2);
+  const nextOpponent = getNextOpponentWidgetData(gameState);
+  const leagueDigestArticles =
+    getLeagueDigestArticles(gameState).map(resolveNewsArticle);
   const boardObjectives = (gameState.board_objectives || []).map(
     resolveBoardObjective,
   );
@@ -186,6 +230,81 @@ export default function HomeTab({
 
   return (
     <div className="max-w-6xl mx-auto flex flex-col gap-5">
+      {isPreseason && (
+        <Card accent="primary">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <CalendarClock className="w-4 h-4 text-primary-500" />
+              {t("season.preseasonStatus")}
+            </div>
+          </CardHeader>
+          <CardBody>
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="accent" size="sm">
+                    {t(`season.phases.${seasonContext.phase}`)}
+                  </Badge>
+                  <Badge variant={transferWindowVariant} size="sm">
+                    {t(`season.transferWindowStatus.${transferWindow.status}`)}
+                  </Badge>
+                </div>
+                <p className="text-sm text-gray-700 dark:text-gray-300">
+                  {t("season.preseasonFocus")}
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:min-w-[22rem]">
+                <div className="rounded-xl bg-gray-50 px-4 py-3 dark:bg-navy-700/50">
+                  <p className="text-[10px] font-heading font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                    {t("season.opener")}
+                  </p>
+                  <p className="mt-1 text-sm font-heading font-bold text-gray-800 dark:text-gray-100">
+                    {seasonStartLabel
+                      ? t("season.startsOn", { date: seasonStartLabel })
+                      : t("season.noOpener")}
+                  </p>
+                  {seasonContext.days_until_season_start !== null && (
+                    <p className="mt-1 text-xs text-primary-500 dark:text-primary-400">
+                      {t("season.startsInDays", {
+                        count: seasonContext.days_until_season_start,
+                      })}
+                    </p>
+                  )}
+                </div>
+                <div className="rounded-xl bg-gray-50 px-4 py-3 dark:bg-navy-700/50">
+                  <p className="text-[10px] font-heading font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                    {t("transfers.centre")}
+                  </p>
+                  <p className="mt-1 text-sm font-heading font-bold text-gray-800 dark:text-gray-100">
+                    {transferWindowSummary}
+                  </p>
+                  {(transferWindow.opens_on || transferWindow.closes_on) && (
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {transferWindow.status === "Closed" &&
+                      transferWindow.opens_on
+                        ? t("season.windowOpensOn", {
+                            date: formatDateShort(
+                              transferWindow.opens_on,
+                              lang,
+                            ),
+                          })
+                        : transferWindow.closes_on
+                          ? t("season.windowClosesOn", {
+                              date: formatDateShort(
+                                transferWindow.closes_on,
+                                lang,
+                              ),
+                            })
+                          : transferWindowSummary}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </CardBody>
+        </Card>
+      )}
+
       {/* Onboarding — Getting Started Checklist */}
       {onboardingState.showOnboarding &&
         completedSteps < onboardingSteps.length && (
@@ -278,7 +397,21 @@ export default function HomeTab({
             {t("home.leaguePosition")}
           </CardHeader>
           <CardBody>
-            {myStanding && myStandingData ? (
+            {isPreseason ? (
+              <div className="flex flex-col items-center gap-2 py-4 text-center">
+                <Badge variant="accent" size="sm">
+                  {t(`season.phases.${seasonContext.phase}`)}
+                </Badge>
+                <p className="text-sm font-heading font-bold text-gray-800 dark:text-gray-100">
+                  {seasonStartLabel
+                    ? t("season.startsOn", { date: seasonStartLabel })
+                    : t("season.noOpener")}
+                </p>
+                <p className="text-xs text-gray-500 dark:text-gray-400 max-w-xs">
+                  {t("season.standingsLocked")}
+                </p>
+              </div>
+            ) : myStanding && myStandingData ? (
               <div className="flex flex-col items-center gap-3">
                 <div className="flex items-center gap-3">
                   <div className="w-16 h-16 rounded-xl bg-accent-500/10 flex items-center justify-center">
@@ -391,6 +524,143 @@ export default function HomeTab({
                 <p className="text-xs text-gray-500 dark:text-gray-400">
                   {t("home.noLeague")}
                 </p>
+              </div>
+            )}
+          </CardBody>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <Card>
+          <CardHeader
+            action={
+              <button
+                onClick={() => onNavigate?.("Schedule")}
+                className="text-primary-500 dark:text-primary-400 text-xs font-heading font-bold uppercase tracking-wider hover:text-primary-600 dark:hover:text-primary-300 transition-colors"
+              >
+                {t("dashboard.schedule")}
+              </button>
+            }
+          >
+            {t("home.nextOpponent")}
+          </CardHeader>
+          <CardBody>
+            {nextOpponent ? (
+              <div className="flex flex-col gap-3">
+                {(() => {
+                  const fixtureLabel =
+                    nextOpponent.fixture.competition === "League"
+                      ? t("home.matchdayN", {
+                          n: nextOpponent.fixture.matchday,
+                        })
+                      : nextOpponent.fixture.competition ===
+                          "PreseasonTournament"
+                        ? t("season.preseasonTournament")
+                        : t("season.friendly");
+
+                  return (
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-lg font-heading font-bold text-gray-800 dark:text-gray-100 truncate">
+                          {nextOpponent.opponent.name}
+                        </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          {fixtureLabel} ·{" "}
+                          {formatDateShort(nextOpponent.fixture.date, lang)}
+                        </p>
+                      </div>
+                      <Badge
+                        variant={nextOpponent.isHome ? "success" : "accent"}
+                        size="sm"
+                      >
+                        {nextOpponent.isHome ? t("home.home") : t("home.away")}
+                      </Badge>
+                    </div>
+                  );
+                })()}
+
+                {(nextOpponent.standingPosition !== null ||
+                  nextOpponent.standingPoints !== null) && (
+                  <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                    {nextOpponent.standingPosition !== null && (
+                      <Badge variant="neutral" size="sm">
+                        #{nextOpponent.standingPosition}
+                      </Badge>
+                    )}
+                    {nextOpponent.standingPoints !== null && (
+                      <span className="font-heading font-bold text-gray-700 dark:text-gray-300">
+                        {nextOpponent.standingPoints} {t("common.pts")}
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {nextOpponent.recentForm.length > 0 && (
+                  <div className="flex gap-1.5">
+                    {nextOpponent.recentForm.map((result, index) => (
+                      <span
+                        key={`${nextOpponent.opponent.id}-${index}`}
+                        className={`w-6 h-6 rounded flex items-center justify-center text-[10px] font-heading font-bold text-white ${
+                          result === "W"
+                            ? "bg-green-500"
+                            : result === "L"
+                              ? "bg-red-500"
+                              : "bg-gray-400"
+                        }`}
+                      >
+                        {result}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500 dark:text-gray-400 py-4 text-center">
+                {t("home.noUpcomingOpponent")}
+              </p>
+            )}
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader
+            action={
+              <button
+                onClick={() => onNavigate?.("News")}
+                className="text-primary-500 dark:text-primary-400 text-xs font-heading font-bold uppercase tracking-wider hover:text-primary-600 dark:hover:text-primary-300 transition-colors"
+              >
+                {t("dashboard.news")}
+              </button>
+            }
+          >
+            {t("home.leagueDigest")}
+          </CardHeader>
+          <CardBody className="p-0">
+            {leagueDigestArticles.length === 0 ? (
+              <p className="text-sm text-gray-500 dark:text-gray-400 p-6 text-center">
+                {t("home.noLeagueDigest")}
+              </p>
+            ) : (
+              <div className="divide-y divide-gray-100 dark:divide-navy-600">
+                {leagueDigestArticles.map((article) => (
+                  <button
+                    key={article.id}
+                    onClick={() => onNavigate?.("News")}
+                    className="w-full text-left px-4 py-3 hover:bg-gray-50 dark:hover:bg-navy-700/50 transition-colors"
+                  >
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <Badge variant="neutral" size="sm">
+                        {t(`news.categories.${article.category}`)}
+                      </Badge>
+                      <span className="text-[10px] text-gray-400 dark:text-gray-500">
+                        {formatDateShort(article.date, lang)} · {article.source}
+                      </span>
+                    </div>
+                    <p className="text-sm font-heading font-bold text-gray-800 dark:text-gray-200 leading-snug">
+                      {article.headline}
+                    </p>
+                  </button>
+                ))}
               </div>
             )}
           </CardBody>

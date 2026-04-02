@@ -1,8 +1,27 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { formatDate, formatWeeklyAmount } from "../lib/helpers";
+import {
+  calcOvr,
+  formatDate,
+  formatWeeklyAmount,
+  getContractRiskBadgeVariant,
+  getContractRiskLevel,
+  getContractYearsRemaining,
+  positionBadgeVariant,
+} from "../lib/helpers";
+import {
+  annualAmountToWeeklyCommitment,
+} from "../lib/finance";
 import { PlayerData, TeamData, GameStateData } from "../store/gameStore";
-import { Card, CardHeader, CardBody, Badge, ProgressBar, CountryFlag } from "./ui";
+import {
+  Button,
+  Card,
+  CardHeader,
+  CardBody,
+  Badge,
+  ProgressBar,
+  CountryFlag,
+} from "./ui";
 import {
   ArrowLeft,
   Shield,
@@ -18,15 +37,76 @@ import {
 import { TraitList } from "./TraitBadge";
 import { useTranslation } from "react-i18next";
 import { countryName } from "../lib/countries";
+import { resolveBackendText } from "../utils/backendI18n";
+import DashboardModalFrame from "./dashboard/DashboardModalFrame";
+import NegotiationFeedbackPanel, {
+  type NegotiationFeedbackPanelData,
+} from "./NegotiationFeedbackPanel";
+import { translatePositionLabel } from "./SquadTab.helpers";
 
 interface PlayerProfileProps {
   player: PlayerData;
   gameState: GameStateData;
   isOwnClub: boolean;
+  startWithRenewalModal?: boolean;
   onClose: () => void;
   onSelectTeam?: (id: string) => void;
   onGameUpdate?: (g: GameStateData) => void;
 }
+
+interface RenewalResponseData {
+  outcome: "accepted" | "rejected" | "counter_offer";
+  game: GameStateData;
+  suggested_wage: number | null;
+  suggested_years: number | null;
+  session_status: "idle" | "open" | "agreed" | "blocked" | "stalled";
+  is_terminal: boolean;
+  cooled_off?: boolean;
+  feedback?: NegotiationFeedbackData | null;
+}
+
+interface RenewalProjectionData {
+  projection: {
+    current_annual_wage_bill: number;
+    projected_annual_wage_bill: number;
+    annual_wage_budget: number;
+    annual_soft_cap: number;
+    current_weekly_wage_spend: number;
+    projected_weekly_wage_spend: number;
+    current_cash_runway_weeks: number | null;
+    projected_cash_runway_weeks: number | null;
+    currently_over_budget: boolean;
+    policy_allows: boolean;
+  };
+}
+
+type NegotiationFeedbackData = NegotiationFeedbackPanelData;
+
+interface DelegatedRenewalCaseData {
+  player_id: string;
+  status: "successful" | "failed" | "stalled";
+  note: string;
+  note_key?: string;
+  note_params?: Record<string, string>;
+}
+
+interface DelegatedRenewalResponseData {
+  game: GameStateData;
+  report: {
+    success_count: number;
+    failure_count: number;
+    stalled_count: number;
+    cases: DelegatedRenewalCaseData[];
+  };
+}
+
+type RenewalStatus =
+  | "idle"
+  | "accepted"
+  | "rejected"
+  | "counter_offer"
+  | "blocked"
+  | "error";
 
 function getTeamNameLocal(
   teams: TeamData[],
@@ -36,24 +116,6 @@ function getTeamNameLocal(
 ): string {
   if (!id) return freeAgent;
   return teams.find((t) => t.id === id)?.name ?? unknown;
-}
-
-function calcOvr(p: PlayerData): number {
-  const a = p.attributes;
-  return Math.round(
-    (a.pace +
-      a.stamina +
-      a.strength +
-      a.passing +
-      a.shooting +
-      a.tackling +
-      a.dribbling +
-      a.defending +
-      a.positioning +
-      a.vision +
-      a.decisions) /
-      11,
-  );
 }
 
 function calcAge(dob: string): number {
@@ -76,25 +138,9 @@ function formatValue(val: number): string {
 }
 
 function formatWage(val: number, weeklySuffix: string): string {
-  return formatWeeklyAmount(`€${val.toLocaleString()}`, weeklySuffix);
+  const weeklyWage = annualAmountToWeeklyCommitment(val);
+  return formatWeeklyAmount(`€${weeklyWage.toLocaleString()}`, weeklySuffix);
 }
-
-const positionBadgeVariant = (
-  pos: string,
-): "accent" | "primary" | "success" | "danger" => {
-  switch (pos) {
-    case "Goalkeeper":
-      return "accent";
-    case "Defender":
-      return "primary";
-    case "Midfielder":
-      return "success";
-    case "Forward":
-      return "danger";
-    default:
-      return "primary";
-  }
-};
 
 function attrColor(val: number): string {
   if (val >= 80) return "text-primary-500 dark:text-primary-400";
@@ -120,12 +166,21 @@ export default function PlayerProfile({
   player,
   gameState,
   isOwnClub,
+  startWithRenewalModal = false,
   onClose,
   onSelectTeam,
   onGameUpdate,
 }: PlayerProfileProps) {
   const { t, i18n } = useTranslation();
   const weeklySuffix = t("finances.perWeekSuffix", "/wk");
+  const primaryPosition = player.natural_position || player.position;
+  const footednessLabel = t(
+    `common.footedness.${player.footedness || "Right"}`,
+    {
+      defaultValue: player.footedness || "Right",
+    },
+  );
+  const weakFootValue = player.weak_foot ?? 2;
 
   const resolveInjuryName = (injuryName: string): string => {
     if (injuryName.includes(".")) {
@@ -143,7 +198,29 @@ export default function PlayerProfile({
     "idle" | "sending" | "sent" | "error"
   >("idle");
   const [scoutError, setScoutError] = useState<string | null>(null);
-  const ovr = calcOvr(player);
+  const [showRenewalModal, setShowRenewalModal] = useState(false);
+  const [renewalWage, setRenewalWage] = useState("");
+  const [renewalLength, setRenewalLength] = useState("2");
+  const [renewalSubmitting, setRenewalSubmitting] = useState(false);
+  const [renewalStatus, setRenewalStatus] = useState<RenewalStatus>("idle");
+  const [renewalError, setRenewalError] = useState<string | null>(null);
+  const [renewalSuggestedWage, setRenewalSuggestedWage] = useState<
+    number | null
+  >(null);
+  const [renewalSuggestedYears, setRenewalSuggestedYears] = useState<
+    number | null
+  >(null);
+  const [renewalSessionStatus, setRenewalSessionStatus] =
+    useState<RenewalResponseData["session_status"]>("idle");
+  const [renewalIsTerminal, setRenewalIsTerminal] = useState(false);
+  const [renewalCooledOff, setRenewalCooledOff] = useState(false);
+  const [renewalFeedback, setRenewalFeedback] =
+    useState<NegotiationFeedbackData | null>(null);
+  const [renewalProjection, setRenewalProjection] =
+    useState<RenewalProjectionData["projection"] | null>(null);
+  const [hasConsumedInitialRenewalIntent, setHasConsumedInitialRenewalIntent] =
+    useState(false);
+  const ovr = calcOvr(player, primaryPosition);
   const age = calcAge(player.date_of_birth);
   const teamName = getTeamNameLocal(
     gameState.teams,
@@ -151,6 +228,32 @@ export default function PlayerProfile({
     t("common.freeAgent"),
     t("common.unknown"),
   );
+  const contractRiskLevel = getContractRiskLevel(
+    player.contract_end,
+    gameState.clock.current_date,
+  );
+  const contractRiskLabel =
+    contractRiskLevel === "critical"
+      ? t("finances.contractRiskCritical")
+      : contractRiskLevel === "warning"
+        ? t("finances.contractRiskWarning")
+        : t("finances.contractRiskStable");
+  const renewalOfferedWage = Number(renewalWage);
+  const renewalOfferedYears = Number(renewalLength);
+  const isRenewalWageValid =
+    Number.isFinite(renewalOfferedWage) && renewalOfferedWage > 0;
+  const isRenewalLengthValid =
+    Number.isInteger(renewalOfferedYears) && renewalOfferedYears > 0;
+  const renewalViolatesSoftCap =
+    isRenewalWageValid &&
+    renewalProjection !== null &&
+    !renewalProjection.policy_allows;
+  const renewalSubmitDisabled =
+    renewalSubmitting ||
+    renewalIsTerminal ||
+    !isRenewalWageValid ||
+    !isRenewalLengthValid ||
+    renewalViolatesSoftCap;
 
   const isGK = player.position === "Goalkeeper";
   const currentSeason = gameState.league?.season ?? null;
@@ -347,6 +450,257 @@ export default function PlayerProfile({
     };
   }, [detailedTotals.minutesPlayed, percentilePool, playerRates]);
 
+  function openRenewalModal(): void {
+    setRenewalWage(String(player.wage));
+    setRenewalLength("2");
+    setRenewalSubmitting(false);
+    setRenewalStatus("idle");
+    setRenewalError(null);
+    setRenewalSuggestedWage(null);
+    setRenewalSuggestedYears(null);
+    setRenewalSessionStatus("idle");
+    setRenewalIsTerminal(false);
+    setRenewalCooledOff(false);
+    setRenewalFeedback(null);
+    setRenewalProjection(null);
+    setShowRenewalModal(true);
+  }
+
+  function closeRenewalModal(): void {
+    if (renewalSubmitting) {
+      return;
+    }
+
+    setShowRenewalModal(false);
+  }
+
+  useEffect(() => {
+    setHasConsumedInitialRenewalIntent(false);
+  }, [player.id, startWithRenewalModal]);
+
+  useEffect(() => {
+    if (
+      !isOwnClub ||
+      !startWithRenewalModal ||
+      showRenewalModal ||
+      hasConsumedInitialRenewalIntent
+    ) {
+      return;
+    }
+
+    setHasConsumedInitialRenewalIntent(true);
+    openRenewalModal();
+  }, [
+    hasConsumedInitialRenewalIntent,
+    isOwnClub,
+    showRenewalModal,
+    startWithRenewalModal,
+  ]);
+
+  useEffect(() => {
+    if (!showRenewalModal || !isRenewalWageValid) {
+      setRenewalProjection(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadProjection = async (): Promise<void> => {
+      try {
+        const result = await invoke<RenewalProjectionData>(
+          "preview_renewal_financial_impact",
+          {
+            playerId: player.id,
+            weeklyWage: renewalOfferedWage,
+          },
+        );
+
+        if (!cancelled) {
+          setRenewalProjection(result.projection ?? null);
+        }
+      } catch {
+        if (!cancelled) {
+          setRenewalProjection(null);
+        }
+      }
+    };
+
+    loadProjection();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isRenewalWageValid, player.id, renewalOfferedWage, showRenewalModal]);
+
+  function getRenewalStatusMessage(): string | null {
+    if (renewalSessionStatus === "blocked" || renewalStatus === "blocked") {
+      return t("playerProfile.renewalBlocked");
+    }
+
+    if (renewalStatus === "accepted") {
+      return t("playerProfile.renewalAccepted");
+    }
+
+    if (renewalStatus === "rejected") {
+      return t("playerProfile.renewalRejected");
+    }
+
+    if (
+      renewalStatus === "counter_offer" &&
+      renewalSuggestedWage !== null &&
+      renewalSuggestedYears !== null
+    ) {
+      return t("playerProfile.renewalCounter", {
+        wage: renewalSuggestedWage,
+        years: renewalSuggestedYears,
+      });
+    }
+
+    return renewalError;
+  }
+
+  function getRenewalStatusClassName(): string {
+    if (renewalStatus === "accepted") {
+      return "text-primary-500";
+    }
+
+    if (renewalStatus === "rejected" || renewalStatus === "error") {
+      return "text-red-500";
+    }
+
+    if (renewalStatus === "counter_offer") {
+      return "text-accent-600 dark:text-accent-400";
+    }
+
+    return "text-gray-500 dark:text-gray-400";
+  }
+
+  async function handleRenewalSubmit(): Promise<void> {
+    if (renewalSubmitDisabled) {
+      return;
+    }
+
+    setRenewalSubmitting(true);
+    setRenewalStatus("idle");
+    setRenewalError(null);
+    setRenewalCooledOff(false);
+
+    try {
+      const result = await invoke<RenewalResponseData>("propose_renewal", {
+        playerId: player.id,
+        weeklyWage: renewalOfferedWage,
+        contractYears: renewalOfferedYears,
+      });
+
+      onGameUpdate?.(result.game);
+      setRenewalStatus(result.outcome);
+      setRenewalSuggestedWage(result.suggested_wage);
+      setRenewalSuggestedYears(result.suggested_years);
+      setRenewalSessionStatus(result.session_status);
+      setRenewalIsTerminal(result.is_terminal);
+      setRenewalCooledOff(result.cooled_off ?? false);
+      setRenewalFeedback(result.feedback ?? null);
+
+      if (result.session_status === "blocked") {
+        setRenewalStatus("blocked");
+      }
+
+      if (result.outcome === "counter_offer") {
+        if (result.suggested_wage !== null) {
+          setRenewalWage(String(result.suggested_wage));
+        }
+
+        if (result.suggested_years !== null) {
+          setRenewalLength(String(result.suggested_years));
+        }
+      }
+    } catch (error) {
+      setRenewalStatus("error");
+      setRenewalError(String(error));
+      setRenewalCooledOff(false);
+    } finally {
+      setRenewalSubmitting(false);
+    }
+  }
+
+  async function handleDelegateRenewal(): Promise<void> {
+    if (renewalSubmitting) {
+      return;
+    }
+
+    setRenewalSubmitting(true);
+    setRenewalError(null);
+    setRenewalCooledOff(false);
+
+    try {
+      const result = await invoke<DelegatedRenewalResponseData>(
+        "delegate_renewals",
+        {
+          playerIds: [player.id],
+          maxWageIncreasePct: 35,
+          maxContractYears: 3,
+        },
+      );
+
+      onGameUpdate?.(result.game);
+      const delegatedCase = result.report.cases.find(
+        (renewalCase) => renewalCase.player_id === player.id,
+      );
+
+      if (!delegatedCase) {
+        setRenewalStatus("error");
+        setRenewalError(t("playerProfile.renewalDelegateMissingReport"));
+        return;
+      }
+
+      if (delegatedCase.status === "successful") {
+        setRenewalStatus("accepted");
+        setRenewalSessionStatus("agreed");
+        setRenewalIsTerminal(true);
+        setRenewalSuggestedWage(null);
+        setRenewalSuggestedYears(null);
+        setRenewalCooledOff(false);
+        setRenewalFeedback(null);
+        return;
+      }
+
+      if (delegatedCase.status === "stalled") {
+        setRenewalStatus("rejected");
+        setRenewalSessionStatus("stalled");
+        setRenewalIsTerminal(false);
+        setRenewalCooledOff(false);
+        setRenewalFeedback(null);
+        setRenewalError(
+          resolveBackendText(
+            delegatedCase.note_key,
+            delegatedCase.note,
+            delegatedCase.note_params,
+          ),
+        );
+        return;
+      }
+
+      setRenewalStatus("blocked");
+      setRenewalSessionStatus("blocked");
+      setRenewalIsTerminal(true);
+      setRenewalCooledOff(false);
+      setRenewalFeedback(null);
+      setRenewalError(
+        resolveBackendText(
+          delegatedCase.note_key,
+          delegatedCase.note,
+          delegatedCase.note_params,
+        ),
+      );
+    } catch (error) {
+      setRenewalStatus("error");
+      setRenewalError(String(error));
+      setRenewalCooledOff(false);
+    } finally {
+      setRenewalSubmitting(false);
+    }
+  }
+
   const attrGroups = [
     {
       label: t("common.attrGroups.physical"),
@@ -426,24 +780,24 @@ export default function PlayerProfile({
     },
     ...(isGK
       ? [
-          {
-            label: t("common.attrGroups.goalkeeper"),
-            attrs: [
-              {
-                name: t("common.attributes.handling"),
-                value: player.attributes.handling,
-              },
-              {
-                name: t("common.attributes.reflexes"),
-                value: player.attributes.reflexes,
-              },
-              {
-                name: t("common.attributes.aerial"),
-                value: player.attributes.aerial,
-              },
-            ],
-          },
-        ]
+        {
+          label: t("common.attrGroups.goalkeeper"),
+          attrs: [
+            {
+              name: t("common.attributes.handling"),
+              value: player.attributes.handling,
+            },
+            {
+              name: t("common.attributes.reflexes"),
+              value: player.attributes.reflexes,
+            },
+            {
+              name: t("common.attributes.aerial"),
+              value: player.attributes.aerial,
+            },
+          ],
+        },
+      ]
       : []),
   ];
 
@@ -462,16 +816,15 @@ export default function PlayerProfile({
 
       {/* Hero header */}
       <Card accent="primary" className="mb-5">
-        <div className="bg-gradient-to-r from-navy-700 to-navy-800 p-8 rounded-t-xl">
+        <div className="bg-linear-to-r from-navy-700 to-navy-800 p-8 rounded-t-xl">
           <div className="flex items-start gap-6">
             <div
-              className={`w-24 h-24 rounded-2xl flex items-center justify-center font-heading font-bold text-4xl border-2 ${
-                ovr >= 75
+              className={`w-24 h-24 rounded-2xl flex items-center justify-center font-heading font-bold text-4xl border-2 ${ovr >= 75
                   ? "bg-primary-500/20 text-primary-400 border-primary-500/30"
                   : ovr >= 55
                     ? "bg-accent-500/20 text-accent-400 border-accent-500/30"
                     : "bg-gray-500/20 text-gray-400 border-gray-500/30"
-              }`}
+                }`}
             >
               {ovr}
             </div>
@@ -480,25 +833,35 @@ export default function PlayerProfile({
                 {player.full_name}
               </h2>
               <div className="flex items-center gap-3 mt-2">
-                <Badge
-                  variant={positionBadgeVariant(
-                    player.natural_position || player.position,
-                  )}
-                >
-                  {player.natural_position || player.position}
+                <Badge variant={positionBadgeVariant(primaryPosition)}>
+                  {translatePositionLabel(t, primaryPosition)}
                 </Badge>
                 {player.alternate_positions?.map((ap) => (
-                  <span key={ap} title={`Can also play ${ap}`}>
-                    <Badge variant="neutral">{ap}</Badge>
-                  </span>
+                  <Badge key={ap} variant="neutral">
+                    {translatePositionLabel(t, ap)}
+                  </Badge>
                 ))}
                 <span className="text-gray-400 text-sm">
-                  <CountryFlag code={player.nationality} locale={i18n.language} className="mr-1 text-sm leading-none" />
+                  <CountryFlag
+                    code={player.nationality}
+                    locale={i18n.language}
+                    className="mr-1 text-sm leading-none"
+                  />
                   {countryName(player.nationality, i18n.language)}
                 </span>
                 <span className="text-gray-500">•</span>
                 <span className="text-gray-400 text-sm">
                   {t("common.age")} {age}
+                </span>
+                <span className="text-gray-500">•</span>
+                <span className="text-gray-400 text-sm">
+                  {t("common.footednessLabel", { defaultValue: "Foot" })}:{" "}
+                  {footednessLabel}
+                </span>
+                <span className="text-gray-500">•</span>
+                <span className="text-gray-400 text-sm">
+                  {t("common.weakFoot", { defaultValue: "Weak foot" })}:{" "}
+                  {weakFootValue}/5
                 </span>
               </div>
               <p className="text-gray-400 text-sm mt-2 flex items-center gap-1.5">
@@ -601,7 +964,7 @@ export default function PlayerProfile({
 
             {/* Key stats in header */}
             <div className="hidden md:grid grid-cols-2 gap-3">
-              <div className="bg-white/5 rounded-xl px-5 py-3 text-center min-w-[100px]">
+              <div className="bg-white/5 rounded-xl px-5 py-3 text-center min-w-25">
                 <p className="text-xs text-gray-400 font-heading uppercase tracking-wider">
                   {t("common.condition")}
                 </p>
@@ -611,7 +974,7 @@ export default function PlayerProfile({
                   {player.condition}%
                 </p>
               </div>
-              <div className="bg-white/5 rounded-xl px-5 py-3 text-center min-w-[100px]">
+              <div className="bg-white/5 rounded-xl px-5 py-3 text-center min-w-25">
                 <p className="text-xs text-gray-400 font-heading uppercase tracking-wider">
                   {t("common.morale")}
                 </p>
@@ -621,7 +984,7 @@ export default function PlayerProfile({
                   {player.morale}%
                 </p>
               </div>
-              <div className="bg-white/5 rounded-xl px-5 py-3 text-center min-w-[100px]">
+              <div className="bg-white/5 rounded-xl px-5 py-3 text-center min-w-25">
                 <p className="text-xs text-gray-400 font-heading uppercase tracking-wider">
                   {t("common.value")}
                 </p>
@@ -629,7 +992,7 @@ export default function PlayerProfile({
                   {formatValue(player.market_value)}
                 </p>
               </div>
-              <div className="bg-white/5 rounded-xl px-5 py-3 text-center min-w-[100px]">
+              <div className="bg-white/5 rounded-xl px-5 py-3 text-center min-w-25">
                 <p className="text-xs text-gray-400 font-heading uppercase tracking-wider">
                   {t("common.wage")}
                 </p>
@@ -706,10 +1069,29 @@ export default function PlayerProfile({
                 label={t("common.contract")}
                 value={
                   player.contract_end
-                    ? t("finances.until", {
-                        year: player.contract_end.substring(0, 4),
-                      })
+                    ? t("finances.contractExpiresOn", {
+                      date: player.contract_end,
+                    })
                     : t("playerProfile.noContract")
+                }
+              />
+              <InfoRow
+                icon={<Calendar className="w-4 h-4" />}
+                label={t("playerProfile.yearsRemaining")}
+                value={getContractYearsRemaining(
+                  player.contract_end,
+                  gameState.clock.current_date,
+                )}
+              />
+              <InfoRow
+                icon={<Briefcase className="w-4 h-4" />}
+                label={t("playerProfile.contractRisk")}
+                value={
+                  <Badge
+                    variant={getContractRiskBadgeVariant(contractRiskLevel)}
+                  >
+                    {contractRiskLabel}
+                  </Badge>
                 }
               />
               <InfoRow
@@ -733,6 +1115,13 @@ export default function PlayerProfile({
                 value={`${player.morale}%`}
               />
             </div>
+            {isOwnClub ? (
+              <div className="pt-3">
+                <Button size="sm" variant="outline" onClick={openRenewalModal}>
+                  {t("common.renewContract")}
+                </Button>
+              </div>
+            ) : null}
           </CardBody>
         </Card>
 
@@ -777,7 +1166,7 @@ export default function PlayerProfile({
                         <span className="font-heading font-bold text-sm w-8 text-right tabular-nums text-gray-700 dark:text-gray-200">
                           {Math.round(
                             group.attrs.reduce((s, a) => s + a.value, 0) /
-                              group.attrs.length,
+                            group.attrs.length,
                           )}
                         </span>
                       </div>
@@ -1057,6 +1446,188 @@ export default function PlayerProfile({
           </CardBody>
         </Card>
       </div>
+
+      {showRenewalModal ? (
+        <DashboardModalFrame maxWidthClassName="max-w-md">
+          <div className="space-y-4">
+            <div>
+              <h3 className="text-lg font-heading font-bold uppercase tracking-wider text-gray-900 dark:text-gray-100">
+                {t("playerProfile.renewalTitle")}
+              </h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                {player.full_name}
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label
+                  htmlFor="renewal-wage"
+                  className="text-xs font-heading font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 block mb-1"
+                >
+                  {t("playerProfile.renewalWage")}
+                </label>
+                <input
+                  id="renewal-wage"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={renewalWage}
+                  onChange={(event) => setRenewalWage(event.target.value)}
+                  disabled={renewalIsTerminal}
+                  className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-navy-700 border border-gray-200 dark:border-navy-600 text-sm text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary-500/50"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="renewal-length"
+                  className="text-xs font-heading font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 block mb-1"
+                >
+                  {t("playerProfile.renewalLength")}
+                </label>
+                <input
+                  id="renewal-length"
+                  type="number"
+                  min="1"
+                  max="5"
+                  step="1"
+                  value={renewalLength}
+                  onChange={(event) => setRenewalLength(event.target.value)}
+                  disabled={renewalIsTerminal}
+                  className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-navy-700 border border-gray-200 dark:border-navy-600 text-sm text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary-500/50"
+                />
+              </div>
+            </div>
+
+            {!isRenewalWageValid && renewalWage !== "" ? (
+              <p className="text-sm text-red-500">
+                {t("playerProfile.renewalInvalidWage")}
+              </p>
+            ) : null}
+
+            {renewalViolatesSoftCap ? (
+              <p className="text-sm text-red-500">
+                {t("playerProfile.renewalBudgetWarning", {
+                  defaultValue: "Offer exceeds the board wage pressure limit",
+                })}
+              </p>
+            ) : null}
+
+            {renewalProjection ? (
+              <div className="rounded-lg border border-gray-200 dark:border-navy-600 bg-gray-50 dark:bg-navy-700/40 p-3 space-y-2">
+                <p className="text-xs font-heading font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  {t("playerProfile.renewalProjectionTitle", {
+                    defaultValue: "Projected financial impact",
+                  })}
+                </p>
+                <p className="text-xs text-gray-600 dark:text-gray-300">
+                  {t("playerProfile.renewalProjectionWageBill", {
+                    before: formatWage(
+                      renewalProjection.current_annual_wage_bill,
+                      weeklySuffix,
+                    ),
+                    after: formatWage(
+                      renewalProjection.projected_annual_wage_bill,
+                      weeklySuffix,
+                    ),
+                    defaultValue:
+                      "Weekly wage bill {{before}} -> {{after}}",
+                  })}
+                </p>
+                <p className="text-xs text-gray-600 dark:text-gray-300">
+                  {t("playerProfile.renewalProjectionBudgetUsage", {
+                    before:
+                      renewalProjection.annual_wage_budget > 0
+                        ? Math.round(
+                          (renewalProjection.current_annual_wage_bill /
+                            renewalProjection.annual_wage_budget) *
+                          100,
+                        )
+                        : 0,
+                    after:
+                      renewalProjection.annual_wage_budget > 0
+                        ? Math.round(
+                          (renewalProjection.projected_annual_wage_bill /
+                            renewalProjection.annual_wage_budget) *
+                          100,
+                        )
+                        : 0,
+                    defaultValue:
+                      "Wage budget use {{before}}% -> {{after}}%",
+                  })}
+                </p>
+                <p className="text-xs text-gray-600 dark:text-gray-300">
+                  {t("playerProfile.renewalProjectionRunway", {
+                    before:
+                      renewalProjection.current_cash_runway_weeks === null
+                        ? t("finances.runwayStable")
+                        : t("finances.runwayWeeks", {
+                          count: renewalProjection.current_cash_runway_weeks,
+                        }),
+                    after:
+                      renewalProjection.projected_cash_runway_weeks === null
+                        ? t("finances.runwayStable")
+                        : t("finances.runwayWeeks", {
+                          count: renewalProjection.projected_cash_runway_weeks,
+                        }),
+                    defaultValue: "Cash runway {{before}} -> {{after}}",
+                  })}
+                </p>
+              </div>
+            ) : null}
+
+            {getRenewalStatusMessage() ? (
+              <p
+                className={`text-sm font-medium ${getRenewalStatusClassName()}`}
+              >
+                {getRenewalStatusMessage()}
+              </p>
+            ) : null}
+
+            {renewalCooledOff ? (
+              <p className="text-sm text-amber-600 dark:text-amber-300">
+                {t("playerProfile.renewalCooledOff")}
+              </p>
+            ) : null}
+
+            <NegotiationFeedbackPanel
+              feedback={renewalFeedback}
+              titleKey="playerProfile.renewalConversationTitle"
+              roundKey="playerProfile.renewalRound"
+              patienceKey="playerProfile.renewalPatience"
+              tensionKey="playerProfile.renewalTension"
+            />
+
+            <div className="flex gap-2 justify-end">
+              {renewalIsTerminal ? (
+                <Button variant="ghost" onClick={closeRenewalModal}>
+                  {t("common.done")}
+                </Button>
+              ) : (
+                <>
+                  <Button variant="ghost" onClick={closeRenewalModal}>
+                    {t("common.cancel")}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => void handleDelegateRenewal()}
+                    disabled={renewalSubmitting}
+                  >
+                    {t("playerProfile.delegateRenewal")}
+                  </Button>
+                  <Button
+                    onClick={() => void handleRenewalSubmit()}
+                    disabled={renewalSubmitDisabled}
+                  >
+                    {t("playerProfile.renewalSubmit")}
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+        </DashboardModalFrame>
+      ) : null}
     </div>
   );
 }
@@ -1089,7 +1660,7 @@ function InfoRow({
 }: {
   icon: React.ReactNode;
   label: string;
-  value: string;
+  value: React.ReactNode;
 }) {
   return (
     <div className="flex items-center gap-3 py-2 border-b border-gray-100 dark:border-navy-600 last:border-0">

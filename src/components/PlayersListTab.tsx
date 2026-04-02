@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { GameStateData } from "../store/gameStore";
+import { GameStateData, PlayerSelectionOptions } from "../store/gameStore";
 import { Card, CardBody, Badge, Select, CountryFlag } from "./ui";
 import {
   Search,
@@ -18,11 +18,14 @@ import {
   positionBadgeVariant,
 } from "../lib/helpers";
 import { useTranslation } from "react-i18next";
-import { translatePositionAbbreviation } from "./SquadTab.helpers";
+import {
+  normalisePosition,
+  translatePositionAbbreviation,
+} from "./SquadTab.helpers";
 
 interface PlayersListTabProps {
   gameState: GameStateData;
-  onSelectPlayer: (id: string) => void;
+  onSelectPlayer: (id: string, options?: PlayerSelectionOptions) => void;
   onSelectTeam: (id: string) => void;
 }
 
@@ -67,7 +70,10 @@ export default function PlayersListTab({
       )
         return false;
     }
-    if (posFilter && (p.natural_position || p.position) !== posFilter)
+    if (
+      posFilter &&
+      normalisePosition(p.natural_position || p.position) !== posFilter
+    )
       return false;
     if (teamFilter && p.team_id !== teamFilter) return false;
     if (statusFilter === "transfer" && !p.transfer_listed) return false;
@@ -89,13 +95,18 @@ export default function PlayersListTab({
         cmp = a.full_name.localeCompare(b.full_name);
         break;
       case "position":
-        cmp = (posOrder[a.position] || 99) - (posOrder[b.position] || 99);
+        cmp =
+          (posOrder[normalisePosition(a.natural_position || a.position)] ||
+            99) -
+          (posOrder[normalisePosition(b.natural_position || b.position)] || 99);
         break;
       case "age":
         cmp = calcAge(a.date_of_birth) - calcAge(b.date_of_birth);
         break;
       case "ovr":
-        cmp = calcOvr(a) - calcOvr(b);
+        cmp =
+          calcOvr(a, a.natural_position || a.position) -
+          calcOvr(b, b.natural_position || b.position);
         break;
       case "value":
         cmp = (a.market_value || 0) - (b.market_value || 0);
@@ -254,7 +265,10 @@ export default function PlayersListTab({
                 {filtered
                   .slice((page - 1) * pageSize, page * pageSize)
                   .map((player) => {
-                    const ovr = calcOvr(player);
+                    const ovr = calcOvr(
+                      player,
+                      player.natural_position || player.position,
+                    );
                     const age = calcAge(player.date_of_birth);
                     return (
                       <tr
@@ -287,7 +301,10 @@ export default function PlayersListTab({
                           className="py-2.5 px-4 text-sm text-gray-500 dark:text-gray-400"
                           title={player.nationality}
                         >
-                          <CountryFlag code={player.nationality} className="text-lg leading-none" />
+                          <CountryFlag
+                            code={player.nationality}
+                            className="text-lg leading-none"
+                          />
                         </td>
                         <td className="py-2.5 px-4">
                           <button

@@ -1,7 +1,11 @@
 import { useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { GameStateData, PlayerData } from "../store/gameStore";
-import { Badge, Card, ProgressBar, Select, CountryFlag } from "./ui";
+import type {
+  GameStateData,
+  PlayerData,
+  PlayerSelectionOptions,
+} from "../store/gameStore";
+import { Badge, Button, Card, ProgressBar, Select, CountryFlag } from "./ui";
 import {
   AlertTriangle,
   ChevronDown,
@@ -14,7 +18,11 @@ import {
 import {
   calcAge,
   calcOvr,
+  formatWeeklyAmount,
   formatVal,
+  getContractRiskBadgeVariant,
+  getContractRiskLevel,
+  getContractYearsRemaining,
   positionBadgeVariant,
 } from "../lib/helpers";
 import { TraitList } from "./TraitBadge";
@@ -36,7 +44,7 @@ interface SquadRosterViewProps {
   gameState: GameStateData;
   managerId: string;
   onGameUpdate?: (g: GameStateData) => void;
-  onSelectPlayer: (id: string) => void;
+  onSelectPlayer: (id: string, options?: PlayerSelectionOptions) => void;
 }
 
 type FilterScope = "all" | "xi" | "bench" | "outOfPosition" | "injured";
@@ -49,6 +57,7 @@ export default function SquadRosterView({
   onSelectPlayer,
 }: SquadRosterViewProps) {
   const { t } = useTranslation();
+  const weeklySuffix = t("finances.perWeekSuffix", "/wk");
   const myTeam = gameState.teams.find((team) => team.manager_id === managerId);
   const [playerSearch, setPlayerSearch] = useState("");
   const [positionFilter, setPositionFilter] = useState("All");
@@ -77,7 +86,8 @@ export default function SquadRosterView({
       (a, b) =>
         (posOrder[normalisePosition(a.position)] || 99) -
           (posOrder[normalisePosition(b.position)] || 99) ||
-        calcOvr(b) - calcOvr(a),
+        calcOvr(b, b.natural_position || b.position) -
+          calcOvr(a, a.natural_position || a.position),
     );
 
   const playersById = useMemo(
@@ -172,11 +182,19 @@ export default function SquadRosterView({
       };
 
       switch (sortKey) {
-        case "pos":
+        case "pos": {
+          const aPosition = xiIds.has(a.id)
+            ? xiActivePosition.get(a.id) || a.position
+            : a.natural_position || a.position;
+          const bPosition = xiIds.has(b.id)
+            ? xiActivePosition.get(b.id) || b.position
+            : b.natural_position || b.position;
+
           return (
             (posOrder[getPos(a)] || 99) - (posOrder[getPos(b)] || 99) ||
-            calcOvr(b) - calcOvr(a)
+            calcOvr(b, bPosition) - calcOvr(a, aPosition)
           );
+        }
         case "name":
           return a.full_name.localeCompare(b.full_name);
         case "age":
@@ -185,8 +203,16 @@ export default function SquadRosterView({
           return a.condition - b.condition;
         case "morale":
           return a.morale - b.morale;
-        case "ovr":
-          return calcOvr(a) - calcOvr(b);
+        case "ovr": {
+          const aPosition = xiIds.has(a.id)
+            ? xiActivePosition.get(a.id) || a.position
+            : a.natural_position || a.position;
+          const bPosition = xiIds.has(b.id)
+            ? xiActivePosition.get(b.id) || b.position
+            : b.natural_position || b.position;
+
+          return calcOvr(a, aPosition) - calcOvr(b, bPosition);
+        }
         default:
           return 0;
       }
@@ -358,18 +384,40 @@ export default function SquadRosterView({
                 <th className="py-2.5 px-4 font-heading font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
                   {t("common.value")}
                 </th>
+                <th className="py-2.5 px-4 font-heading font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  {t("finances.wagePerWeek")}
+                </th>
+                <th className="py-2.5 px-4 font-heading font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  {t("playerProfile.yearsRemaining")}
+                </th>
+                <th className="py-2.5 px-4 font-heading font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  {t("finances.contractRisk")}
+                </th>
+                <th className="py-2.5 px-4 font-heading font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  {t("common.actions")}
+                </th>
                 <SortHeader col="ovr" label={t("common.ovr")} />
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-navy-600">
               {filteredRoster.map((player) => {
-                const ovr = calcOvr(player);
-                const age = calcAge(player.date_of_birth);
                 const inXI = xiIds.has(player.id);
                 const currentPos = inXI
                   ? xiActivePosition.get(player.id) || player.position
-                  : player.position;
+                  : player.natural_position || player.position;
+                const ovr = calcOvr(player, currentPos);
+                const age = calcAge(player.date_of_birth);
                 const wrongPos = inXI && isOutOfPosition(player);
+                const contractRiskLevel = getContractRiskLevel(
+                  player.contract_end,
+                  gameState.clock.current_date,
+                );
+                const contractRiskLabel =
+                  contractRiskLevel === "critical"
+                    ? t("finances.contractRiskCritical")
+                    : contractRiskLevel === "warning"
+                      ? t("finances.contractRiskWarning")
+                      : t("finances.contractRiskStable");
 
                 const contextItems = [
                   {
@@ -487,11 +535,65 @@ export default function SquadRosterView({
                       <td className="py-2.5 px-4 text-xs text-gray-600 dark:text-gray-400 font-medium">
                         {formatVal(player.market_value)}
                       </td>
+                      <td className="py-2.5 px-4 text-xs text-gray-600 dark:text-gray-400 font-medium whitespace-nowrap">
+                        {formatWeeklyAmount(
+                          `€${player.wage.toLocaleString()}`,
+                          weeklySuffix,
+                        )}
+                      </td>
+                      <td className="py-2.5 px-4 text-xs text-gray-600 dark:text-gray-400">
+                        <div className="space-y-1">
+                          <div className="font-medium text-gray-700 dark:text-gray-300">
+                            {getContractYearsRemaining(
+                              player.contract_end,
+                              gameState.clock.current_date,
+                            )}
+                          </div>
+                          <div>
+                            {player.contract_end
+                              ? t("finances.contractExpiresOn", {
+                                  date: player.contract_end,
+                                })
+                              : "—"}
+                          </div>
+                        </div>
+                      </td>
                       <td className="py-2.5 px-4">
+                        <Badge
+                          variant={getContractRiskBadgeVariant(
+                            contractRiskLevel,
+                          )}
+                          size="sm"
+                        >
+                          {contractRiskLabel}
+                        </Badge>
+                      </td>
+                      <td className="py-2.5 px-4">
+                        {player.contract_end &&
+                        contractRiskLevel !== "stable" ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onSelectPlayer(player.id, {
+                                openRenewal: true,
+                              });
+                            }}
+                          >
+                            {t("common.renewContract")}
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-gray-500 dark:text-gray-400">
+                            —
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-4 text-right">
                         <span
-                          className={`font-heading font-bold text-base tabular-nums ${
-                            ovr >= 75
-                              ? "text-success-500 dark:text-success-400"
+                          className={`font-heading font-bold text-sm ${
+                            ovr >= 80
+                              ? "text-primary-500"
                               : ovr >= 55
                                 ? "text-accent-600 dark:text-accent-400"
                                 : "text-gray-500 dark:text-gray-400"

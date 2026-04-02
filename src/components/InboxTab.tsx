@@ -67,6 +67,64 @@ interface ResolveMessageActionResult {
   effect_i18n_params?: Record<string, string> | null;
 }
 
+function renderDelegatedRenewalReport(
+  message: MessageData,
+): JSX.Element | null {
+  const report = message.context?.delegated_renewal_report;
+
+  if (!report || report.cases.length === 0) {
+    return null;
+  }
+
+  return (
+    <div
+      className="mt-6 rounded-xl border border-gray-100 bg-gray-50 p-4 dark:border-navy-600 dark:bg-navy-700"
+      data-testid="delegated-renewal-report"
+    >
+      <div className="space-y-2">
+        {report.cases.map((renewalCase, index) => {
+          const detail = resolveBackendText(
+            renewalCase.note_key,
+            "",
+            renewalCase.note_params,
+          );
+
+          const line =
+            renewalCase.status === "successful"
+              ? resolveBackendText(
+                  "be.msg.delegatedRenewals.case.successful",
+                  `Completed: ${renewalCase.player_name} agreed to ${String(renewalCase.agreed_years ?? 0)} year(s) on €${String(renewalCase.agreed_wage ?? 0)}/wk.`,
+                  {
+                    player: renewalCase.player_name,
+                    years: String(renewalCase.agreed_years ?? 0),
+                    wage: String(renewalCase.agreed_wage ?? 0),
+                  },
+                )
+              : renewalCase.status === "stalled"
+                ? resolveBackendText(
+                    "be.msg.delegatedRenewals.case.stalled",
+                    `Still difficult: ${renewalCase.player_name} — ${detail}`,
+                    {
+                      player: renewalCase.player_name,
+                      detail,
+                    },
+                  )
+                : resolveBackendText(
+                    "be.msg.delegatedRenewals.case.failed",
+                    `Failed: ${renewalCase.player_name} — ${detail}`,
+                    {
+                      player: renewalCase.player_name,
+                      detail,
+                    },
+                  );
+
+          return renderMessageBodyLine(`• ${line}`, index);
+        })}
+      </div>
+    </div>
+  );
+}
+
 type MessageSortOrder = "newest" | "oldest";
 
 type DeleteModalState =
@@ -95,6 +153,13 @@ const ROUTE_TAB_MAP: Record<string, string> = {
   manager: "Manager",
   home: "Home",
 };
+
+const PLAYER_EVENT_MESSAGE_PREFIXES = [
+  "morale_talk_",
+  "bench_complaint_",
+  "happy_player_",
+  "contract_concern_",
+];
 
 const CATEGORY_ICONS: Record<string, ReactNode> = {
   Welcome: <Trophy className="w-4 h-4" />,
@@ -339,6 +404,12 @@ function getNavigationTarget(route: string): NavigationTarget {
     tab: resolvedTab,
     shouldResolveAction: true,
   };
+}
+
+function isPlayerEventMessage(messageId: string): boolean {
+  return PLAYER_EVENT_MESSAGE_PREFIXES.some((prefix) =>
+    messageId.startsWith(prefix),
+  );
 }
 
 function InboxDeleteConfirmModal({
@@ -955,6 +1026,8 @@ export default function InboxTab({
                     </p>
                   )}
 
+                  {renderDelegatedRenewalReport(selectedMessage)}
+
                   {/* Scout report player card */}
                   {selectedMessage.context?.scout_report && (
                     <ScoutPlayerCard
@@ -990,6 +1063,7 @@ export default function InboxTab({
                     <div className="mt-4 p-3 bg-primary-50 dark:bg-primary-500/10 border border-primary-200 dark:border-primary-500/30 rounded-xl flex items-center gap-2 animate-pulse">
                       <CheckCircle2 className="w-4 h-4 text-primary-500 shrink-0" />
                       <span className="text-sm font-medium text-primary-700 dark:text-primary-300">
+                        {t("inbox.effectOutcomeLabel", "Outcome")}:{" "}
                         {effectFeedback}
                       </span>
                     </div>
@@ -1020,10 +1094,15 @@ export default function InboxTab({
                             <div key={action.id} className="space-y-2">
                               <p className="text-xs font-heading font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500 flex items-center gap-1.5 mb-3">
                                 <MessageCircle className="w-3.5 h-3.5" />
-                                {t(
-                                  "inbox.chooseResponse",
-                                  "Choose your response",
-                                )}
+                                {isPlayerEventMessage(selectedMessage.id)
+                                  ? t(
+                                      "inbox.chooseResponseOutcomeVaries",
+                                      "Choose your response — outcome varies",
+                                    )
+                                  : t(
+                                      "inbox.chooseResponse",
+                                      "Choose your response",
+                                    )}
                               </p>
                               {opts.map((opt) => (
                                 <button

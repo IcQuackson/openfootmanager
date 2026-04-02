@@ -1,8 +1,63 @@
 use crate::game::Game;
 use crate::messages;
-use domain::league::{FixtureStatus, GoalEvent, MatchResult};
-use domain::player::{PlayerMatchStatsEntry, Position as DomainPosition};
+use domain::league::{
+    CompactMatchEvent, CompactMatchReport, CompactTeamMatchStats, FixtureStatus, GoalEvent,
+    MatchResult,
+};
+use domain::player::{
+    PlayerIssue, PlayerIssueCategory, PlayerMatchStatsEntry, PlayerPromiseKind,
+    Position as DomainPosition,
+};
 use log::debug;
+
+fn compact_team_stats(stats: &engine::TeamStats, possession_pct: u8) -> CompactTeamMatchStats {
+    CompactTeamMatchStats {
+        possession_pct,
+        shots: stats.shots,
+        shots_on_target: stats.shots_on_target,
+        fouls: stats.fouls,
+        corners: stats.corners,
+        yellow_cards: stats.yellow_cards,
+        red_cards: stats.red_cards,
+    }
+}
+
+fn compact_match_report(report: &engine::MatchReport) -> CompactMatchReport {
+    let home_possession_pct = report.home_possession.round().clamp(0.0, 100.0) as u8;
+    let away_possession_pct = (100.0 - report.home_possession).round().clamp(0.0, 100.0) as u8;
+
+    let events = report
+        .events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.event_type,
+                engine::EventType::Goal
+                    | engine::EventType::PenaltyGoal
+                    | engine::EventType::PenaltyMiss
+                    | engine::EventType::YellowCard
+                    | engine::EventType::RedCard
+                    | engine::EventType::SecondYellow
+                    | engine::EventType::Injury
+                    | engine::EventType::Substitution
+            )
+        })
+        .map(|event| CompactMatchEvent {
+            minute: event.minute,
+            event_type: format!("{:?}", event.event_type),
+            side: format!("{:?}", event.side),
+            player_id: event.player_id.clone(),
+            secondary_player_id: event.secondary_player_id.clone(),
+        })
+        .collect();
+
+    CompactMatchReport {
+        total_minutes: report.total_minutes,
+        home_stats: compact_team_stats(&report.home_stats, home_possession_pct),
+        away_stats: compact_team_stats(&report.away_stats, away_possession_pct),
+        events,
+    }
+}
 
 /// Apply a completed match report to the game state: update fixture, standings,
 /// player stats, stamina, and generate messages. Public so Tauri can call it
@@ -43,7 +98,9 @@ pub fn apply_match_report(
         away_goals: report.away_goals,
         home_scorers,
         away_scorers,
+        report: Some(compact_match_report(report)),
     };
+    let mut counts_for_standings = false;
 
     let mut fixture_meta: Option<(String, u32, u32, String)> = None;
 
@@ -52,20 +109,23 @@ pub fn apply_match_report(
         let season = league.season;
         let fixture = &mut league.fixtures[fixture_index];
         fixture.status = FixtureStatus::Completed;
+        counts_for_standings = fixture.counts_for_league_standings();
 
-        if let Some(entry) = league
-            .standings
-            .iter_mut()
-            .find(|e| e.team_id == home_team_id)
-        {
-            entry.record_result(result.home_goals, result.away_goals);
-        }
-        if let Some(entry) = league
-            .standings
-            .iter_mut()
-            .find(|e| e.team_id == away_team_id)
-        {
-            entry.record_result(result.away_goals, result.home_goals);
+        if counts_for_standings {
+            if let Some(entry) = league
+                .standings
+                .iter_mut()
+                .find(|e| e.team_id == home_team_id)
+            {
+                entry.record_result(result.home_goals, result.away_goals);
+            }
+            if let Some(entry) = league
+                .standings
+                .iter_mut()
+                .find(|e| e.team_id == away_team_id)
+            {
+                entry.record_result(result.away_goals, result.home_goals);
+            }
         }
 
         fixture.result = Some(result);
@@ -95,19 +155,23 @@ pub fn apply_match_report(
         matchday,
         &fixture_date,
     );
+    resolve_post_match_promises(game, report, home_team_id, away_team_id);
 
-    // Deplete stamina for players who played
-    deplete_match_stamina(game, home_team_id);
-    deplete_match_stamina(game, away_team_id);
+    // Deplete stamina for players who played, scaled by minutes on pitch
+    deplete_match_stamina(game, home_team_id, report);
+    deplete_match_stamina(game, away_team_id, report);
 
     // Update morale based on result and individual performance
     update_post_match_morale(game, report, home_team_id, away_team_id);
 
     // Update team form (last 5 results)
-    update_team_form(game, report, home_team_id, away_team_id);
+    if counts_for_standings {
+        update_team_form(game, report, home_team_id, away_team_id);
+    }
 
     // Update board satisfaction based on match result
-    if let Some(user_team_id) = &game.manager.team_id
+    if counts_for_standings
+        && let Some(user_team_id) = &game.manager.team_id
         && (*user_team_id == home_team_id || *user_team_id == away_team_id)
     {
         let user_goals = if *user_team_id == home_team_id {
@@ -161,7 +225,8 @@ pub fn apply_match_report(
     }
 
     // Generate match result message for user's team
-    if let Some(user_team_id) = &game.manager.team_id
+    if counts_for_standings
+        && let Some(user_team_id) = &game.manager.team_id
         && (*user_team_id == home_team_id || *user_team_id == away_team_id)
     {
         let fixture = &game.league.as_ref().unwrap().fixtures[fixture_index];
@@ -195,7 +260,9 @@ pub fn apply_match_report(
     }
 
     // Generate match report news article
-    super::news::generate_match_news(game, fixture_index, home_team_id, away_team_id, report);
+    if counts_for_standings {
+        super::news::generate_match_news(game, fixture_index, home_team_id, away_team_id, report);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -278,6 +345,80 @@ fn apply_player_stats(
     }
 }
 
+fn resolve_post_match_promises(
+    game: &mut Game,
+    report: &engine::MatchReport,
+    home_team_id: &str,
+    away_team_id: &str,
+) {
+    for player in game.players.iter_mut() {
+        let Some(team_id) = player.team_id.as_deref() else {
+            continue;
+        };
+        if team_id != home_team_id && team_id != away_team_id {
+            continue;
+        }
+
+        let Some(promise) = player.morale_core.pending_promise.clone() else {
+            continue;
+        };
+
+        let played = report.player_stats.contains_key(&player.id);
+
+        match promise.kind {
+            PlayerPromiseKind::PlayingTime => {
+                if played {
+                    player.morale_core.pending_promise = None;
+                    player.morale_core.manager_trust =
+                        (i16::from(player.morale_core.manager_trust) + 3).clamp(0, 100) as u8;
+
+                    if player
+                        .morale_core
+                        .unresolved_issue
+                        .as_ref()
+                        .is_some_and(|issue| issue.category == PlayerIssueCategory::PlayingTime)
+                    {
+                        player.morale_core.unresolved_issue = None;
+                    }
+                } else if promise.matches_remaining <= 1 {
+                    player.morale_core.pending_promise = None;
+                    player.morale_core.manager_trust =
+                        (i16::from(player.morale_core.manager_trust) - 12).clamp(0, 100) as u8;
+                    player.morale_core.unresolved_issue = Some(PlayerIssue {
+                        category: PlayerIssueCategory::PlayingTime,
+                        severity: 75,
+                    });
+                } else {
+                    player.morale_core.pending_promise = Some(domain::player::PlayerPromise {
+                        kind: PlayerPromiseKind::PlayingTime,
+                        matches_remaining: promise.matches_remaining - 1,
+                    });
+                }
+            }
+        }
+    }
+}
+
+fn capped_positive_recovery(delta: i16, player: &domain::player::Player) -> i16 {
+    let Some(issue) = player.morale_core.unresolved_issue.as_ref() else {
+        return delta;
+    };
+
+    if delta <= 0 {
+        return delta;
+    }
+
+    if issue.severity >= 75 {
+        return 0;
+    }
+
+    if issue.severity >= 50 {
+        return ((delta + 1) / 2).max(1);
+    }
+
+    delta
+}
+
 /// Update player morale based on match result and individual performance.
 fn update_post_match_morale(
     game: &mut Game,
@@ -333,7 +474,7 @@ fn update_post_match_morale(
             }
         }
 
-        let total_delta = result_delta + individual_delta;
+        let total_delta = capped_positive_recovery(result_delta + individual_delta, player);
         let new_morale = (base_morale + total_delta).clamp(10, 100) as u8;
         player.morale = new_morale;
     }
@@ -398,7 +539,8 @@ fn update_team_form(
                 for player in game.players.iter_mut() {
                     if player.team_id.as_deref() == Some(team_id_str) {
                         let base = player.morale as i16;
-                        player.morale = (base + streak_delta).clamp(10, 100) as u8;
+                        let adjusted_delta = capped_positive_recovery(streak_delta, player);
+                        player.morale = (base + adjusted_delta).clamp(10, 100) as u8;
                     }
                 }
             }
@@ -406,12 +548,32 @@ fn update_team_form(
     }
 }
 
-fn deplete_match_stamina(game: &mut Game, team_id: &str) {
+fn deplete_match_stamina(game: &mut Game, team_id: &str, report: &engine::MatchReport) {
     for player in game.players.iter_mut() {
         if player.team_id.as_deref() == Some(team_id) {
+            let minutes = report
+                .player_stats
+                .get(&player.id)
+                .map(|ps| ps.minutes_played)
+                .unwrap_or(0);
+            if minutes == 0 {
+                continue; // Did not play, no depletion
+            }
+            let minutes_factor = minutes as f64 / 90.0;
             let stamina_factor = player.attributes.stamina as f64 / 100.0;
-            let depletion = (25.0 * (1.0 - stamina_factor * 0.5)) as u8;
+            let base_depletion = 40.0 * (1.0 - stamina_factor * 0.4);
+            let depletion = (base_depletion * minutes_factor) as u8;
             player.condition = player.condition.saturating_sub(depletion);
+
+            // Regular match play improves fitness for players with significant time.
+            // 60+ minutes builds sharpness; probabilistic to keep changes gradual.
+            if minutes >= 60 {
+                use rand::Rng;
+                let mut rng = rand::thread_rng();
+                if rng.gen_bool(0.3) && player.fitness < 100 {
+                    player.fitness = player.fitness.saturating_add(1);
+                }
+            }
         }
     }
 }
