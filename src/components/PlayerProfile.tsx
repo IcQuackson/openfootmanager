@@ -140,6 +140,49 @@ export default function PlayerProfile({
   );
 
   const isGK = player.position === "Goalkeeper";
+  const currentSeason = gameState.league?.season ?? null;
+  const seasonMatchStats = (player.match_stats ?? []).filter(
+    (entry) => currentSeason === null || entry.season === currentSeason,
+  );
+  const detailedTotals = seasonMatchStats.reduce(
+    (acc, entry) => {
+      acc.shots += entry.shots;
+      acc.shotsOnTarget += entry.shots_on_target;
+      acc.passesCompleted += entry.passes_completed;
+      acc.passesAttempted += entry.passes_attempted;
+      acc.tacklesWon += entry.tackles_won;
+      acc.interceptions += entry.interceptions;
+      acc.foulsCommitted += entry.fouls_committed;
+      acc.yellowCards += entry.yellow_cards;
+      acc.redCards += entry.red_cards;
+      if (entry.rating > 0) {
+        acc.ratingSum += entry.rating;
+        acc.ratedMatches += 1;
+      }
+      return acc;
+    },
+    {
+      shots: 0,
+      shotsOnTarget: 0,
+      passesCompleted: 0,
+      passesAttempted: 0,
+      tacklesWon: 0,
+      interceptions: 0,
+      foulsCommitted: 0,
+      yellowCards: 0,
+      redCards: 0,
+      ratingSum: 0,
+      ratedMatches: 0,
+    },
+  );
+  const passAccuracy =
+    detailedTotals.passesAttempted > 0
+      ? `${((detailedTotals.passesCompleted / detailedTotals.passesAttempted) * 100).toFixed(1)}%`
+      : "-";
+  const avgMatchRating =
+    detailedTotals.ratedMatches > 0
+      ? (detailedTotals.ratingSum / detailedTotals.ratedMatches).toFixed(1)
+      : "-";
 
   const attrGroups = [
     {
@@ -663,6 +706,75 @@ export default function PlayerProfile({
                     ? player.stats.avg_rating.toFixed(1)
                     : "-"
                 }
+              />
+            </div>
+          </CardBody>
+        </Card>
+
+        {/* Detailed Player Stats (aggregated from persisted match-level data) */}
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            {t("playerProfile.playerStats", { defaultValue: "Player Statistics" })}
+          </CardHeader>
+          <CardBody>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <StatBox
+                label={t("playerProfile.shots", { defaultValue: "Shots" })}
+                value={detailedTotals.shots}
+              />
+              <StatBox
+                label={t("playerProfile.shotsOnTarget", {
+                  defaultValue: "On Target",
+                })}
+                value={detailedTotals.shotsOnTarget}
+              />
+              <StatBox
+                label={t("playerProfile.passesCompleted", {
+                  defaultValue: "Passes C",
+                })}
+                value={detailedTotals.passesCompleted}
+              />
+              <StatBox
+                label={t("playerProfile.passesAttempted", {
+                  defaultValue: "Passes A",
+                })}
+                value={detailedTotals.passesAttempted}
+              />
+              <StatBox
+                label={t("playerProfile.passAccuracy", {
+                  defaultValue: "Pass %",
+                })}
+                value={passAccuracy}
+              />
+              <StatBox
+                label={t("playerProfile.tacklesWon", {
+                  defaultValue: "Tackles",
+                })}
+                value={detailedTotals.tacklesWon}
+              />
+              <StatBox
+                label={t("playerProfile.interceptions", {
+                  defaultValue: "Interceptions",
+                })}
+                value={detailedTotals.interceptions}
+              />
+              <StatBox
+                label={t("playerProfile.foulsCommitted", {
+                  defaultValue: "Fouls",
+                })}
+                value={detailedTotals.foulsCommitted}
+              />
+              <StatBox
+                label={t("playerProfile.yellows")}
+                value={detailedTotals.yellowCards}
+              />
+              <StatBox
+                label={t("playerProfile.reds")}
+                value={detailedTotals.redCards}
+              />
+              <StatBox
+                label={t("playerProfile.avgRating", { defaultValue: "Avg Rating" })}
+                value={avgMatchRating}
               />
             </div>
           </CardBody>

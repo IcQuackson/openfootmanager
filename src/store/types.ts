@@ -70,6 +70,29 @@ export interface CareerEntry {
   assists: number;
 }
 
+export interface PlayerMatchStatsEntry {
+  fixture_id: string;
+  season: number;
+  matchday: number;
+  date: string;
+  team_id: string | null;
+  opponent_team_id: string | null;
+  was_home: boolean;
+  minutes_played: number;
+  goals: number;
+  assists: number;
+  shots: number;
+  shots_on_target: number;
+  passes_completed: number;
+  passes_attempted: number;
+  tackles_won: number;
+  interceptions: number;
+  fouls_committed: number;
+  yellow_cards: number;
+  red_cards: number;
+  rating: number;
+}
+
 export interface PlayerData {
   id: string;
   match_name: string;
@@ -109,6 +132,7 @@ export interface PlayerData {
   wage: number;
   market_value: number;
   stats: PlayerSeasonStats;
+  match_stats?: PlayerMatchStatsEntry[];
   career: CareerEntry[];
   transfer_listed: boolean;
   loan_listed: boolean;

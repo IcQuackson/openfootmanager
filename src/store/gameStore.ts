@@ -9,6 +9,7 @@ export type {
   TeamData,
   PlayerSeasonStats,
   CareerEntry,
+  PlayerMatchStatsEntry,
   PlayerData,
   TransferOfferData,
   StaffData,

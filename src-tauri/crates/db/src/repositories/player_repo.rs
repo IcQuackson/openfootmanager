@@ -12,6 +12,8 @@ pub fn upsert_player(conn: &Connection, p: &Player) -> Result<(), String> {
         .map(|i| serde_json::to_string(i).unwrap_or_default());
     let traits_json = serde_json::to_string(&p.traits).map_err(|e| format!("JSON error: {}", e))?;
     let stats_json = serde_json::to_string(&p.stats).map_err(|e| format!("JSON error: {}", e))?;
+    let match_stats_json =
+        serde_json::to_string(&p.match_stats).map_err(|e| format!("JSON error: {}", e))?;
     let career_json = serde_json::to_string(&p.career).map_err(|e| format!("JSON error: {}", e))?;
     let offers_json =
         serde_json::to_string(&p.transfer_offers).map_err(|e| format!("JSON error: {}", e))?;
@@ -27,8 +29,8 @@ pub fn upsert_player(conn: &Connection, p: &Player) -> Result<(), String> {
           attributes, condition, morale, injury, team_id, traits,
           contract_end, wage, market_value, stats, career,
           transfer_listed, loan_listed, transfer_offers, alternate_positions,
-          natural_position, training_focus)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+          natural_position, training_focus, match_stats)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
         params![
             p.id,
             p.match_name,
@@ -53,6 +55,7 @@ pub fn upsert_player(conn: &Connection, p: &Player) -> Result<(), String> {
             alt_positions_json,
             natural_position_str,
             training_focus_str,
+            match_stats_json,
         ],
     )
     .map_err(|e| format!("Failed to upsert player: {}", e))?;
@@ -97,7 +100,7 @@ pub fn load_all_players(conn: &Connection) -> Result<Vec<Player>, String> {
                     attributes, condition, morale, injury, team_id, traits,
                     contract_end, wage, market_value, stats, career,
                     transfer_listed, loan_listed, transfer_offers, alternate_positions,
-                    natural_position, training_focus
+                    natural_position, training_focus, match_stats
              FROM players",
         )
         .map_err(|e| format!("Failed to prepare players query: {}", e))?;
@@ -121,7 +124,7 @@ pub fn load_players_by_team(conn: &Connection, team_id: &str) -> Result<Vec<Play
                     attributes, condition, morale, injury, team_id, traits,
                     contract_end, wage, market_value, stats, career,
                     transfer_listed, loan_listed, transfer_offers, alternate_positions,
-                    natural_position, training_focus
+                    natural_position, training_focus, match_stats
              FROM players WHERE team_id = ?1",
         )
         .map_err(|e| format!("Failed to prepare players query: {}", e))?;
@@ -148,6 +151,7 @@ fn row_to_player(row: &rusqlite::Row) -> rusqlite::Result<Player> {
     let alt_positions_json: String = row.get(20)?;
     let natural_position_str: String = row.get(21)?;
     let training_focus_str: Option<String> = row.get(22)?;
+    let match_stats_json: String = row.get(23)?;
     let transfer_listed_int: i32 = row.get(17)?;
     let loan_listed_int: i32 = row.get(18)?;
     let market_value_i64: i64 = row.get(14)?;
@@ -198,6 +202,7 @@ fn row_to_player(row: &rusqlite::Row) -> rusqlite::Result<Player> {
         wage: row.get(13)?,
         market_value: market_value_i64 as u64,
         stats: serde_json::from_str(&stats_json).unwrap_or_default(),
+        match_stats: serde_json::from_str(&match_stats_json).unwrap_or_default(),
         career: serde_json::from_str(&career_json).unwrap_or_default(),
         training_focus: training_focus_str.and_then(|s| parse_training_focus(&s)),
         transfer_listed: transfer_listed_int != 0,
@@ -210,7 +215,7 @@ fn row_to_player(row: &rusqlite::Row) -> rusqlite::Result<Player> {
 mod tests {
     use super::*;
     use crate::game_database::GameDatabase;
-    use domain::player::Injury;
+    use domain::player::{Injury, PlayerMatchStatsEntry};
 
     fn test_db() -> GameDatabase {
         GameDatabase::open_in_memory().unwrap()
@@ -387,6 +392,28 @@ mod tests {
         player.stats.appearances = 20;
         player.stats.goals = 5;
         player.stats.assists = 8;
+        player.match_stats.push(PlayerMatchStatsEntry {
+            fixture_id: "fix-1".to_string(),
+            season: 1,
+            matchday: 3,
+            date: "2025-08-30".to_string(),
+            team_id: Some("team-001".to_string()),
+            opponent_team_id: Some("team-002".to_string()),
+            was_home: true,
+            minutes_played: 90,
+            goals: 2,
+            assists: 1,
+            shots: 5,
+            shots_on_target: 3,
+            passes_completed: 28,
+            passes_attempted: 32,
+            tackles_won: 1,
+            interceptions: 0,
+            fouls_committed: 2,
+            yellow_cards: 1,
+            red_cards: 0,
+            rating: 8.2,
+        });
 
         upsert_player(db.conn(), &player).unwrap();
         let loaded = load_all_players(db.conn()).unwrap();
@@ -394,5 +421,8 @@ mod tests {
         assert_eq!(loaded[0].stats.appearances, 20);
         assert_eq!(loaded[0].stats.goals, 5);
         assert_eq!(loaded[0].stats.assists, 8);
+        assert_eq!(loaded[0].match_stats.len(), 1);
+        assert_eq!(loaded[0].match_stats[0].fixture_id, "fix-1");
+        assert_eq!(loaded[0].match_stats[0].shots, 5);
     }
 }

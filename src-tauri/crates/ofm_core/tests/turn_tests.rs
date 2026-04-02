@@ -513,6 +513,11 @@ fn apply_match_report_updates_player_stats() {
     assert_eq!(scorer.stats.appearances, 1);
     assert_eq!(scorer.stats.goals, 2);
     assert!(scorer.stats.avg_rating > 0.0);
+    assert_eq!(scorer.match_stats.len(), 1);
+    assert_eq!(scorer.match_stats[0].fixture_id, "fix1");
+    assert_eq!(scorer.match_stats[0].goals, 2);
+    assert_eq!(scorer.match_stats[0].shots, 3);
+    assert_eq!(scorer.match_stats[0].passes_attempted, 35);
 }
 
 #[test]
