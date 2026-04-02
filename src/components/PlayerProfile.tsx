@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { formatDate, formatWeeklyAmount } from "../lib/helpers";
 import { PlayerData, TeamData, GameStateData } from "../store/gameStore";
@@ -103,6 +103,19 @@ function attrColor(val: number): string {
   return "text-red-500 dark:text-red-400";
 }
 
+const LEAGUE_PERCENTILE_MINUTES = 90;
+
+function per90(total: number, minutesPlayed: number): number {
+  if (minutesPlayed <= 0) return 0;
+  return (total * 90) / minutesPlayed;
+}
+
+function percentileRank(value: number, values: number[]): number | null {
+  if (values.length === 0) return null;
+  const lessOrEqual = values.filter((v) => v <= value).length;
+  return Math.round((lessOrEqual / values.length) * 100);
+}
+
 export default function PlayerProfile({
   player,
   gameState,
@@ -144,36 +157,46 @@ export default function PlayerProfile({
   const seasonMatchStats = (player.match_stats ?? []).filter(
     (entry) => currentSeason === null || entry.season === currentSeason,
   );
-  const detailedTotals = seasonMatchStats.reduce(
-    (acc, entry) => {
-      acc.shots += entry.shots;
-      acc.shotsOnTarget += entry.shots_on_target;
-      acc.passesCompleted += entry.passes_completed;
-      acc.passesAttempted += entry.passes_attempted;
-      acc.tacklesWon += entry.tackles_won;
-      acc.interceptions += entry.interceptions;
-      acc.foulsCommitted += entry.fouls_committed;
-      acc.yellowCards += entry.yellow_cards;
-      acc.redCards += entry.red_cards;
-      if (entry.rating > 0) {
-        acc.ratingSum += entry.rating;
-        acc.ratedMatches += 1;
-      }
-      return acc;
-    },
-    {
-      shots: 0,
-      shotsOnTarget: 0,
-      passesCompleted: 0,
-      passesAttempted: 0,
-      tacklesWon: 0,
-      interceptions: 0,
-      foulsCommitted: 0,
-      yellowCards: 0,
-      redCards: 0,
-      ratingSum: 0,
-      ratedMatches: 0,
-    },
+  const detailedTotals = useMemo(
+    () =>
+      seasonMatchStats.reduce(
+        (acc, entry) => {
+          acc.minutesPlayed += entry.minutes_played;
+          acc.goals += entry.goals;
+          acc.assists += entry.assists;
+          acc.shots += entry.shots;
+          acc.shotsOnTarget += entry.shots_on_target;
+          acc.passesCompleted += entry.passes_completed;
+          acc.passesAttempted += entry.passes_attempted;
+          acc.tacklesWon += entry.tackles_won;
+          acc.interceptions += entry.interceptions;
+          acc.foulsCommitted += entry.fouls_committed;
+          acc.yellowCards += entry.yellow_cards;
+          acc.redCards += entry.red_cards;
+          if (entry.rating > 0) {
+            acc.ratingSum += entry.rating;
+            acc.ratedMatches += 1;
+          }
+          return acc;
+        },
+        {
+          minutesPlayed: 0,
+          goals: 0,
+          assists: 0,
+          shots: 0,
+          shotsOnTarget: 0,
+          passesCompleted: 0,
+          passesAttempted: 0,
+          tacklesWon: 0,
+          interceptions: 0,
+          foulsCommitted: 0,
+          yellowCards: 0,
+          redCards: 0,
+          ratingSum: 0,
+          ratedMatches: 0,
+        },
+      ),
+    [seasonMatchStats],
   );
   const passAccuracy =
     detailedTotals.passesAttempted > 0
@@ -183,6 +206,146 @@ export default function PlayerProfile({
     detailedTotals.ratedMatches > 0
       ? (detailedTotals.ratingSum / detailedTotals.ratedMatches).toFixed(1)
       : "-";
+  const playerRates = useMemo(
+    () => ({
+      goalsPer90: per90(detailedTotals.goals, detailedTotals.minutesPlayed),
+      assistsPer90: per90(detailedTotals.assists, detailedTotals.minutesPlayed),
+      shotsPer90: per90(detailedTotals.shots, detailedTotals.minutesPlayed),
+      shotsOnTargetPer90: per90(
+        detailedTotals.shotsOnTarget,
+        detailedTotals.minutesPlayed,
+      ),
+      passesCompletedPer90: per90(
+        detailedTotals.passesCompleted,
+        detailedTotals.minutesPlayed,
+      ),
+      tacklesWonPer90: per90(
+        detailedTotals.tacklesWon,
+        detailedTotals.minutesPlayed,
+      ),
+      interceptionsPer90: per90(
+        detailedTotals.interceptions,
+        detailedTotals.minutesPlayed,
+      ),
+      passAccuracy:
+        detailedTotals.passesAttempted > 0
+          ? (detailedTotals.passesCompleted / detailedTotals.passesAttempted) *
+            100
+          : 0,
+    }),
+    [detailedTotals],
+  );
+
+  const leagueTeamIds = useMemo(() => {
+    if (!gameState.league) return null;
+    return new Set(gameState.league.standings.map((s) => s.team_id));
+  }, [gameState.league]);
+
+  const leagueBenchmarks = useMemo(() => {
+    return gameState.players
+      .filter((p) => p.id !== player.id)
+      .filter((p) => (leagueTeamIds ? leagueTeamIds.has(p.team_id ?? "") : true))
+      .map((p) => {
+        const entries = (p.match_stats ?? []).filter(
+          (entry) => currentSeason === null || entry.season === currentSeason,
+        );
+        const totals = entries.reduce(
+          (acc, entry) => {
+            acc.minutesPlayed += entry.minutes_played;
+            acc.goals += entry.goals;
+            acc.assists += entry.assists;
+            acc.shots += entry.shots;
+            acc.shotsOnTarget += entry.shots_on_target;
+            acc.passesCompleted += entry.passes_completed;
+            acc.passesAttempted += entry.passes_attempted;
+            acc.tacklesWon += entry.tackles_won;
+            acc.interceptions += entry.interceptions;
+            return acc;
+          },
+          {
+            minutesPlayed: 0,
+            goals: 0,
+            assists: 0,
+            shots: 0,
+            shotsOnTarget: 0,
+            passesCompleted: 0,
+            passesAttempted: 0,
+            tacklesWon: 0,
+            interceptions: 0,
+          },
+        );
+
+        return {
+          position: p.position,
+          minutesPlayed: totals.minutesPlayed,
+          goalsPer90: per90(totals.goals, totals.minutesPlayed),
+          assistsPer90: per90(totals.assists, totals.minutesPlayed),
+          shotsPer90: per90(totals.shots, totals.minutesPlayed),
+          shotsOnTargetPer90: per90(totals.shotsOnTarget, totals.minutesPlayed),
+          passesCompletedPer90: per90(
+            totals.passesCompleted,
+            totals.minutesPlayed,
+          ),
+          tacklesWonPer90: per90(totals.tacklesWon, totals.minutesPlayed),
+          interceptionsPer90: per90(totals.interceptions, totals.minutesPlayed),
+          passAccuracy:
+            totals.passesAttempted > 0
+              ? (totals.passesCompleted / totals.passesAttempted) * 100
+              : 0,
+        };
+      })
+      .filter((p) => p.minutesPlayed >= LEAGUE_PERCENTILE_MINUTES);
+  }, [currentSeason, gameState.players, leagueTeamIds, player.id]);
+
+  const percentilePool = useMemo(() => {
+    const samePosition = leagueBenchmarks.filter((b) => b.position === player.position);
+    if (samePosition.length >= 5) return samePosition;
+    return leagueBenchmarks;
+  }, [leagueBenchmarks, player.position]);
+
+  const playerPercentiles = useMemo(() => {
+    if (detailedTotals.minutesPlayed < LEAGUE_PERCENTILE_MINUTES) {
+      return null;
+    }
+    if (percentilePool.length === 0) {
+      return null;
+    }
+
+    return {
+      goalsPer90: percentileRank(
+        playerRates.goalsPer90,
+        percentilePool.map((p) => p.goalsPer90),
+      ),
+      assistsPer90: percentileRank(
+        playerRates.assistsPer90,
+        percentilePool.map((p) => p.assistsPer90),
+      ),
+      shotsPer90: percentileRank(
+        playerRates.shotsPer90,
+        percentilePool.map((p) => p.shotsPer90),
+      ),
+      shotsOnTargetPer90: percentileRank(
+        playerRates.shotsOnTargetPer90,
+        percentilePool.map((p) => p.shotsOnTargetPer90),
+      ),
+      passesCompletedPer90: percentileRank(
+        playerRates.passesCompletedPer90,
+        percentilePool.map((p) => p.passesCompletedPer90),
+      ),
+      tacklesWonPer90: percentileRank(
+        playerRates.tacklesWonPer90,
+        percentilePool.map((p) => p.tacklesWonPer90),
+      ),
+      interceptionsPer90: percentileRank(
+        playerRates.interceptionsPer90,
+        percentilePool.map((p) => p.interceptionsPer90),
+      ),
+      passAccuracy: percentileRank(
+        playerRates.passAccuracy,
+        percentilePool.map((p) => p.passAccuracy),
+      ),
+    };
+  }, [detailedTotals.minutesPlayed, percentilePool, playerRates]);
 
   const attrGroups = [
     {
@@ -780,6 +943,79 @@ export default function PlayerProfile({
           </CardBody>
         </Card>
 
+        {/* Per-90 + percentile comparison */}
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            {t("playerProfile.per90AndPercentiles", {
+              defaultValue: "Per 90 & League Percentiles",
+            })}
+          </CardHeader>
+          <CardBody>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mb-3">
+              {t("playerProfile.percentilePoolNote", {
+                count: percentilePool.length,
+                minutes: LEAGUE_PERCENTILE_MINUTES,
+                defaultValue:
+                  "Compared against {{count}} league players (minimum {{minutes}} minutes).",
+              })}
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <ComparisonRow
+                label={t("playerProfile.goalsPer90", { defaultValue: "Goals / 90" })}
+                value={playerRates.goalsPer90}
+                percentile={playerPercentiles?.goalsPer90 ?? null}
+              />
+              <ComparisonRow
+                label={t("playerProfile.assistsPer90", {
+                  defaultValue: "Assists / 90",
+                })}
+                value={playerRates.assistsPer90}
+                percentile={playerPercentiles?.assistsPer90 ?? null}
+              />
+              <ComparisonRow
+                label={t("playerProfile.shotsPer90", { defaultValue: "Shots / 90" })}
+                value={playerRates.shotsPer90}
+                percentile={playerPercentiles?.shotsPer90 ?? null}
+              />
+              <ComparisonRow
+                label={t("playerProfile.shotsOnTargetPer90", {
+                  defaultValue: "On Target / 90",
+                })}
+                value={playerRates.shotsOnTargetPer90}
+                percentile={playerPercentiles?.shotsOnTargetPer90 ?? null}
+              />
+              <ComparisonRow
+                label={t("playerProfile.passesCompletedPer90", {
+                  defaultValue: "Passes C / 90",
+                })}
+                value={playerRates.passesCompletedPer90}
+                percentile={playerPercentiles?.passesCompletedPer90 ?? null}
+              />
+              <ComparisonRow
+                label={t("playerProfile.tacklesPer90", {
+                  defaultValue: "Tackles / 90",
+                })}
+                value={playerRates.tacklesWonPer90}
+                percentile={playerPercentiles?.tacklesWonPer90 ?? null}
+              />
+              <ComparisonRow
+                label={t("playerProfile.interceptionsPer90", {
+                  defaultValue: "Interceptions / 90",
+                })}
+                value={playerRates.interceptionsPer90}
+                percentile={playerPercentiles?.interceptionsPer90 ?? null}
+              />
+              <ComparisonRow
+                label={t("playerProfile.passAccuracy", {
+                  defaultValue: "Pass Accuracy",
+                })}
+                value={`${playerRates.passAccuracy.toFixed(1)}%`}
+                percentile={playerPercentiles?.passAccuracy ?? null}
+              />
+            </div>
+          </CardBody>
+        </Card>
+
         {/* Career history */}
         <Card>
           <CardHeader>{t("playerProfile.careerHistory")}</CardHeader>
@@ -877,6 +1113,34 @@ function StatBox({ label, value }: { label: string; value: number | string }) {
       <p className="text-xs text-gray-400 dark:text-gray-500 font-heading uppercase tracking-wider">
         {label}
       </p>
+    </div>
+  );
+}
+
+function ComparisonRow({
+  label,
+  value,
+  percentile,
+}: {
+  label: string;
+  value: number | string;
+  percentile: number | null;
+}) {
+  const valueLabel = typeof value === "number" ? value.toFixed(2) : value;
+
+  return (
+    <div className="flex items-center justify-between rounded-lg bg-gray-50 dark:bg-navy-700 px-3 py-2">
+      <span className="text-xs text-gray-500 dark:text-gray-400 font-heading uppercase tracking-wider">
+        {label}
+      </span>
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-heading font-bold text-gray-800 dark:text-gray-100 tabular-nums">
+          {valueLabel}
+        </span>
+        <span className="text-xs font-heading font-bold rounded bg-gray-200 dark:bg-navy-600 px-2 py-0.5 tabular-nums text-gray-700 dark:text-gray-200">
+          {percentile === null ? "-" : `P${percentile}`}
+        </span>
+      </div>
     </div>
   );
 }
