@@ -296,6 +296,10 @@ function renderMessageBodyLine(line: string, index: number): JSX.Element {
   );
 }
 
+function hasVisibleMessageBody(body: string): boolean {
+  return body.trim().length > 0;
+}
+
 function isNavigateAction(
   actionType: MessageAction["action_type"],
 ): actionType is NavigateActionType {
@@ -461,6 +465,9 @@ export default function InboxTab({
   const unreadCount = allMessages.filter((message) => !message.read).length;
   const selectedMessage =
     allMessages.find((message) => message.id === selectedMessageId) ?? null;
+  const selectedMessageHasVisibleBody = selectedMessage
+    ? hasVisibleMessageBody(selectedMessage.body)
+    : false;
 
   async function handleSelectMessage(msgId: string): Promise<void> {
     setSelectedMessageId(msgId);
@@ -935,9 +942,18 @@ export default function InboxTab({
               {/* Detail body */}
               <div className="flex-1 overflow-y-auto p-6">
                 <div className="max-w-2xl">
-                  {selectedMessage.body
-                    .split("\n")
-                    .map((line, index) => renderMessageBodyLine(line, index))}
+                  {selectedMessageHasVisibleBody ? (
+                    selectedMessage.body
+                      .split("\n")
+                      .map((line, index) => renderMessageBodyLine(line, index))
+                  ) : (
+                    <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+                      {t(
+                        "inbox.noMessageBody",
+                        "No message content available for this item.",
+                      )}
+                    </p>
+                  )}
 
                   {/* Scout report player card */}
                   {selectedMessage.context?.scout_report && (

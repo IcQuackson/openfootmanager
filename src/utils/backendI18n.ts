@@ -7,6 +7,40 @@ import type {
   BoardObjective,
 } from '../store/gameStore';
 
+function normalizeMessage(msg: MessageData): MessageData {
+  const raw = msg as MessageData & {
+    subject?: unknown;
+    body?: unknown;
+    sender?: unknown;
+    sender_role?: unknown;
+    actions?: unknown;
+    context?: unknown;
+    i18n_params?: unknown;
+  };
+
+  return {
+    ...msg,
+    subject: typeof raw.subject === 'string' ? raw.subject : '',
+    body: typeof raw.body === 'string' ? raw.body : '',
+    sender: typeof raw.sender === 'string' ? raw.sender : '',
+    sender_role: typeof raw.sender_role === 'string' ? raw.sender_role : '',
+    actions: Array.isArray(raw.actions) ? raw.actions : [],
+    context:
+      raw.context && typeof raw.context === 'object'
+        ? (raw.context as MessageData['context'])
+        : {
+            team_id: null,
+            player_id: null,
+            fixture_id: null,
+            match_result: null,
+          },
+    i18n_params:
+      raw.i18n_params && typeof raw.i18n_params === 'object'
+        ? (raw.i18n_params as Record<string, string>)
+        : undefined,
+  };
+}
+
 const PLAYER_EVENT_PREFIX_TO_GROUP: Record<string, string> = {
   morale_talk_: 'moraleCrisis',
   bench_complaint_: 'benchComplaint',
@@ -116,14 +150,21 @@ function inferPlayerEventOptionBaseKey(messageId: string, optionId: string): str
  * Resolve all translatable fields on a message, returning a copy with resolved strings.
  */
 export function resolveMessage(msg: MessageData): MessageData {
-  const p = resolveParamValues(msg.i18n_params);
+  const normalizedMessage = normalizeMessage(msg);
+  const p = resolveParamValues(normalizedMessage.i18n_params);
   return {
-    ...msg,
-    subject: resolve(msg.subject_key, msg.subject, p),
-    body: resolve(msg.body_key, msg.body, p),
-    sender: resolve(msg.sender_key, msg.sender, p),
-    sender_role: resolve(msg.sender_role_key, msg.sender_role, p),
-    actions: msg.actions.map((action) => resolveAction(action, msg.id, p)),
+    ...normalizedMessage,
+    subject: resolve(normalizedMessage.subject_key, normalizedMessage.subject, p),
+    body: resolve(normalizedMessage.body_key, normalizedMessage.body, p),
+    sender: resolve(normalizedMessage.sender_key, normalizedMessage.sender, p),
+    sender_role: resolve(
+      normalizedMessage.sender_role_key,
+      normalizedMessage.sender_role,
+      p,
+    ),
+    actions: normalizedMessage.actions.map((action) =>
+      resolveAction(action, normalizedMessage.id, p),
+    ),
   };
 }
 
