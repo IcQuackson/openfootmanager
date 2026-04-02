@@ -252,6 +252,19 @@ describe("InboxTab", function (): void {
     expect(onGameUpdate).toHaveBeenCalledWith(updatedGameState);
   });
 
+  it("shows a fallback when the selected message body is empty", function (): void {
+    renderInboxTab({
+      gameState: createGameState([
+        createMessage({ id: "m1", read: true, body: "" }),
+      ]),
+      initialMessageId: "m1",
+    });
+
+    expect(
+      screen.getByText("No message content available for this item."),
+    ).toBeInTheDocument();
+  });
+
   it("confirms before deleting selected messages in bulk", async function (): Promise<void> {
     const onGameUpdate = vi.fn();
     const updatedGameState = createGameState([

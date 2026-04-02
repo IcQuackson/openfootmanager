@@ -284,6 +284,31 @@ describe("resolveMessage", () => {
     expect(result.read).toBe(true);
     expect(result.category).toBe("transfer");
   });
+
+  it("normalizes malformed message payloads without throwing", () => {
+    const malformedMessage = {
+      ...makeMessage(),
+      body: undefined,
+      sender: undefined,
+      sender_role: undefined,
+      actions: undefined,
+      context: undefined,
+      i18n_params: undefined,
+    } as unknown as MessageData;
+
+    const result = resolveMessage(malformedMessage);
+
+    expect(result.body).toBe("");
+    expect(result.sender).toBe("");
+    expect(result.sender_role).toBe("");
+    expect(result.actions).toEqual([]);
+    expect(result.context).toEqual({
+      team_id: null,
+      player_id: null,
+      fixture_id: null,
+      match_result: null,
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
