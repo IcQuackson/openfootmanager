@@ -337,11 +337,28 @@ impl LiveMatchState {
 
     /// Convert the finished match into a MatchReport.
     pub fn into_report(self) -> MatchReport {
+        let home_player_ids = self
+            .home
+            .players
+            .iter()
+            .filter(|player| !self.sent_off.contains(&player.id))
+            .map(|player| player.id.clone())
+            .collect::<Vec<_>>();
+        let away_player_ids = self
+            .away
+            .players
+            .iter()
+            .filter(|player| !self.sent_off.contains(&player.id))
+            .map(|player| player.id.clone())
+            .collect::<Vec<_>>();
+
         MatchReport::from_events(
             self.events,
             self.home_possession_ticks,
             self.away_possession_ticks,
             self.current_minute,
+            &home_player_ids,
+            &away_player_ids,
         )
     }
 

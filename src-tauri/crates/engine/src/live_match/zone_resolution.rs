@@ -177,16 +177,33 @@ impl LiveMatchState {
         let def_eff = def_rating * def_mod * crate::shared::home_mod(def_side, &self.config);
         let success = att_eff / (att_eff + def_eff);
         let zone = Zone::attacking_third(att_side);
+        let linkup_chance =
+            ((attacker.passing as f64 + attacker.vision as f64 + attacker.teamwork as f64) / 300.0)
+                .clamp(0.2, 0.7);
+        let attempts_linkup = rng.gen_range(0.0..1.0f64) < linkup_chance;
 
         if rng.gen_range(0.0..1.0f64) < success {
-            let evt = MatchEvent::new(minute, EventType::Dribble, att_side, zone)
-                .with_player(&attacker.id);
+            let evt = if attempts_linkup {
+                MatchEvent::new(minute, EventType::PassCompleted, att_side, zone)
+                    .with_player(&attacker.id)
+            } else {
+                MatchEvent::new(minute, EventType::Dribble, att_side, zone)
+                    .with_player(&attacker.id)
+            };
             self.events.push(evt.clone());
             events.push(evt);
             self.ball_zone = Zone::attacking_box(att_side);
         } else {
-            let is_tackle = rng.gen_range(0.0..1.0f64) < 0.5;
-            if is_tackle {
+            if attempts_linkup {
+                let evt1 = MatchEvent::new(minute, EventType::PassIntercepted, att_side, zone)
+                    .with_player(&attacker.id);
+                let evt2 = MatchEvent::new(minute, EventType::Interception, def_side, zone)
+                    .with_player(&defender.id);
+                self.events.push(evt1.clone());
+                self.events.push(evt2.clone());
+                events.push(evt1);
+                events.push(evt2);
+            } else if rng.gen_range(0.0..1.0f64) < 0.5 {
                 let evt1 = MatchEvent::new(minute, EventType::DribbleTackled, att_side, zone)
                     .with_player(&attacker.id)
                     .with_secondary(&defender.id);
@@ -215,7 +232,7 @@ impl LiveMatchState {
                 }
             }
             self.possession = def_side;
-            self.ball_zone = Zone::defensive_third(att_side);
+            self.ball_zone = Zone::defensive_third(def_side);
         }
         events
     }

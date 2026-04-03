@@ -12,6 +12,7 @@ fn make_player(id: &str, name: &str, position: Position, skill: u8) -> PlayerDat
         name: name.to_string(),
         position,
         condition: 90,
+        fitness: 75,
         pace: skill,
         stamina: skill,
         strength: skill,
@@ -514,6 +515,96 @@ fn player_stats_populated() {
 }
 
 #[test]
+fn all_starters_receive_minutes_in_report() {
+    let home = make_team("home", "Home FC", 65, PlayStyle::Balanced);
+    let away = make_team("away", "Away FC", 65, PlayStyle::Balanced);
+    let config = MatchConfig::default();
+    let report = simulate_with_rng(&home, &away, &config, &mut seeded_rng(77));
+
+    for player in home.players.iter().chain(away.players.iter()) {
+        let player_stats = report
+            .player_stats
+            .get(&player.id)
+            .unwrap_or_else(|| panic!("Missing player stats for {}", player.id));
+        assert!(
+            player_stats.minutes_played > 0,
+            "Expected {} to have recorded minutes",
+            player.id
+        );
+    }
+}
+
+#[test]
+fn forwards_record_pass_attempts_over_multiple_matches() {
+    let home = make_team("home", "Home FC", 65, PlayStyle::Balanced);
+    let away = make_team("away", "Away FC", 65, PlayStyle::Balanced);
+    let config = MatchConfig::default();
+    let forward_ids = home
+        .players
+        .iter()
+        .chain(away.players.iter())
+        .filter(|player| player.position == Position::Forward)
+        .map(|player| player.id.clone())
+        .collect::<Vec<_>>();
+
+    let total_forward_pass_attempts = (0..20)
+        .map(|seed| simulate_with_rng(&home, &away, &config, &mut seeded_rng(seed)))
+        .map(|report| {
+            forward_ids
+                .iter()
+                .map(|player_id| {
+                    report
+                        .player_stats
+                        .get(player_id)
+                        .map(|stats| u32::from(stats.passes_attempted))
+                        .unwrap_or(0)
+                })
+                .sum::<u32>()
+        })
+        .sum::<u32>();
+
+    assert!(
+        total_forward_pass_attempts > 0,
+        "Expected forwards to record pass attempts across repeated simulations"
+    );
+}
+
+#[test]
+fn defenders_record_pass_attempts_over_multiple_matches() {
+    let home = make_team("home", "Home FC", 65, PlayStyle::Balanced);
+    let away = make_team("away", "Away FC", 65, PlayStyle::Balanced);
+    let config = MatchConfig::default();
+    let defender_ids = home
+        .players
+        .iter()
+        .chain(away.players.iter())
+        .filter(|player| player.position == Position::Defender)
+        .map(|player| player.id.clone())
+        .collect::<Vec<_>>();
+
+    let total_defender_pass_attempts = (0..20)
+        .map(|seed| simulate_with_rng(&home, &away, &config, &mut seeded_rng(seed)))
+        .map(|report| {
+            defender_ids
+                .iter()
+                .map(|player_id| {
+                    report
+                        .player_stats
+                        .get(player_id)
+                        .map(|stats| u32::from(stats.passes_attempted))
+                        .unwrap_or(0)
+                })
+                .sum::<u32>()
+        })
+        .sum::<u32>();
+
+    assert!(
+        total_defender_pass_attempts > 0,
+        "Expected defenders to record pass attempts across repeated simulations"
+    );
+}
+
+#[test]
 fn team_stats_shots_consistent() {
     let home = make_team("home", "Home FC", 65, PlayStyle::Attacking);
     let away = make_team("away", "Away FC", 65, PlayStyle::Defensive);
@@ -951,6 +1042,9 @@ fn player_ratings_computed_for_active_players() {
             pid,
             ps.rating
         );
+        if ps.minutes_played > 0 {
+            assert!(ps.rating > 0.0, "Player {} should have a rating", pid);
+        }
     }
 }
 

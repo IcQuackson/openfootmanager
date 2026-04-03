@@ -17,6 +17,7 @@ fn make_player(id: &str, name: &str, pos: Position, skill: u8) -> PlayerData {
         name: name.to_string(),
         position: pos,
         condition: 90,
+        fitness: 75,
         pace: skill,
         stamina: skill,
         strength: skill,
@@ -894,6 +895,31 @@ fn report_has_team_stats() {
     assert!(report.away_stats.shots > 0 || report.away_stats.shots == 0);
 }
 
+#[test]
+fn live_match_defenders_record_pass_attempts_over_multiple_matches() {
+    let total_defender_pass_attempts = (0..20)
+        .map(|seed| {
+            let mut state = make_live_match(false);
+            let mut rng = seeded_rng(seed);
+            run_to_finish(&mut state, &mut rng);
+            state.into_report()
+        })
+        .map(|report| {
+            report
+                .player_stats
+                .iter()
+                .filter(|(player_id, _)| player_id.contains("_def"))
+                .map(|(_, stats)| u32::from(stats.passes_attempted))
+                .sum::<u32>()
+        })
+        .sum::<u32>();
+
+    assert!(
+        total_defender_pass_attempts > 0,
+        "Expected defenders to record pass attempts across repeated live-match simulations"
+    );
+}
+
 // ===========================================================================
 // Tests: Pre-match swaps
 // ===========================================================================
@@ -1184,6 +1210,7 @@ fn make_player_with_traits(
         name: name.to_string(),
         position: pos,
         condition: 90,
+        fitness: 75,
         pace: skill,
         stamina: skill,
         strength: skill,

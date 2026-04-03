@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { beforeEach } from "vitest";
 import { describe, expect, it, vi } from "vitest";
@@ -86,6 +86,7 @@ vi.mock("react-i18next", () => ({
         return "The discussion is still open, but wage level and contract length need to feel clearly worthwhile from their side.";
       if (key === "playerProfile.attributes") return "Attributes";
       if (key === "playerProfile.seasonStats") return "Season Stats";
+      if (key === "playerProfile.assistsPer90") return "Assists / 90";
       if (key === "playerProfile.careerHistory") return "Career History";
       if (key === "playerProfile.noCareer") return "No Career";
       if (key === "finances.wagePerWeek") return "Wage/wk";
@@ -569,5 +570,296 @@ describe("PlayerProfile contract surfaces", () => {
         screen.getByText("Assistant report did not include this player."),
       ).toBeInTheDocument();
     });
+  });
+
+  it("uses midpoint ranking for tied percentile values", () => {
+    const player = createPlayer({
+      match_stats: [
+        {
+          fixture_id: "fixture-1",
+          season: 1,
+          matchday: 1,
+          date: "2026-08-01",
+          team_id: "team-1",
+          opponent_team_id: "team-2",
+          was_home: true,
+          minutes_played: 180,
+          goals: 0,
+          assists: 0,
+          shots: 2,
+          shots_on_target: 1,
+          passes_completed: 20,
+          passes_attempted: 24,
+          tackles_won: 1,
+          interceptions: 1,
+          fouls_committed: 0,
+          yellow_cards: 0,
+          red_cards: 0,
+          rating: 6.8,
+        },
+      ],
+    });
+    const peerOne = createPlayer({
+      id: "player-2",
+      team_id: "team-2",
+      match_stats: [
+        {
+          fixture_id: "fixture-2",
+          season: 1,
+          matchday: 1,
+          date: "2026-08-01",
+          team_id: "team-2",
+          opponent_team_id: "team-1",
+          was_home: false,
+          minutes_played: 180,
+          goals: 0,
+          assists: 0,
+          shots: 1,
+          shots_on_target: 0,
+          passes_completed: 18,
+          passes_attempted: 22,
+          tackles_won: 1,
+          interceptions: 0,
+          fouls_committed: 0,
+          yellow_cards: 0,
+          red_cards: 0,
+          rating: 6.5,
+        },
+      ],
+    });
+    const peerTwo = createPlayer({
+      id: "player-3",
+      team_id: "team-3",
+      match_stats: [
+        {
+          fixture_id: "fixture-3",
+          season: 1,
+          matchday: 1,
+          date: "2026-08-01",
+          team_id: "team-3",
+          opponent_team_id: "team-1",
+          was_home: false,
+          minutes_played: 180,
+          goals: 0,
+          assists: 0,
+          shots: 3,
+          shots_on_target: 1,
+          passes_completed: 16,
+          passes_attempted: 20,
+          tackles_won: 0,
+          interceptions: 1,
+          fouls_committed: 1,
+          yellow_cards: 0,
+          red_cards: 0,
+          rating: 6.4,
+        },
+      ],
+    });
+    const gameState = createGameState(player);
+
+    gameState.teams = [
+      createTeam(),
+      createTeam({ id: "team-2", name: "Beta FC", short_name: "BET" }),
+      createTeam({ id: "team-3", name: "Gamma FC", short_name: "GAM" }),
+    ];
+    gameState.players = [player, peerOne, peerTwo];
+    gameState.league = {
+      id: "league-1",
+      name: "League",
+      season: 1,
+      fixtures: [],
+      standings: [
+        {
+          team_id: "team-1",
+          played: 1,
+          won: 1,
+          drawn: 0,
+          lost: 0,
+          goals_for: 1,
+          goals_against: 0,
+          points: 3,
+        },
+        {
+          team_id: "team-2",
+          played: 1,
+          won: 0,
+          drawn: 1,
+          lost: 0,
+          goals_for: 0,
+          goals_against: 0,
+          points: 1,
+        },
+        {
+          team_id: "team-3",
+          played: 1,
+          won: 0,
+          drawn: 0,
+          lost: 1,
+          goals_for: 0,
+          goals_against: 1,
+          points: 0,
+        },
+      ],
+    };
+
+    render(
+      <PlayerProfile
+        player={player}
+        gameState={gameState}
+        isOwnClub
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Assists / 90")).toBeInTheDocument();
+    expect(screen.getAllByText("P50").length).toBeGreaterThan(0);
+  });
+
+  it("does not fall back to other positions for percentiles", () => {
+    const player = createPlayer({
+      match_stats: [
+        {
+          fixture_id: "fixture-1",
+          season: 1,
+          matchday: 1,
+          date: "2026-08-01",
+          team_id: "team-1",
+          opponent_team_id: "team-2",
+          was_home: true,
+          minutes_played: 180,
+          goals: 1,
+          assists: 0,
+          shots: 4,
+          shots_on_target: 2,
+          passes_completed: 18,
+          passes_attempted: 22,
+          tackles_won: 1,
+          interceptions: 0,
+          fouls_committed: 0,
+          yellow_cards: 0,
+          red_cards: 0,
+          rating: 7.1,
+        },
+      ],
+    });
+    const midfielderOne = createPlayer({
+      id: "player-2",
+      team_id: "team-2",
+      position: "Midfielder",
+      natural_position: "Midfielder",
+      match_stats: [
+        {
+          fixture_id: "fixture-2",
+          season: 1,
+          matchday: 1,
+          date: "2026-08-01",
+          team_id: "team-2",
+          opponent_team_id: "team-1",
+          was_home: false,
+          minutes_played: 180,
+          goals: 0,
+          assists: 1,
+          shots: 2,
+          shots_on_target: 1,
+          passes_completed: 44,
+          passes_attempted: 51,
+          tackles_won: 3,
+          interceptions: 2,
+          fouls_committed: 1,
+          yellow_cards: 0,
+          red_cards: 0,
+          rating: 7.0,
+        },
+      ],
+    });
+    const midfielderTwo = createPlayer({
+      id: "player-3",
+      team_id: "team-3",
+      position: "Midfielder",
+      natural_position: "Midfielder",
+      match_stats: [
+        {
+          fixture_id: "fixture-3",
+          season: 1,
+          matchday: 1,
+          date: "2026-08-01",
+          team_id: "team-3",
+          opponent_team_id: "team-1",
+          was_home: false,
+          minutes_played: 180,
+          goals: 0,
+          assists: 2,
+          shots: 3,
+          shots_on_target: 1,
+          passes_completed: 38,
+          passes_attempted: 45,
+          tackles_won: 2,
+          interceptions: 3,
+          fouls_committed: 0,
+          yellow_cards: 0,
+          red_cards: 0,
+          rating: 7.3,
+        },
+      ],
+    });
+    const gameState = createGameState(player);
+
+    gameState.teams = [
+      createTeam(),
+      createTeam({ id: "team-2", name: "Beta FC", short_name: "BET" }),
+      createTeam({ id: "team-3", name: "Gamma FC", short_name: "GAM" }),
+    ];
+    gameState.players = [player, midfielderOne, midfielderTwo];
+    gameState.league = {
+      id: "league-1",
+      name: "League",
+      season: 1,
+      fixtures: [],
+      standings: [
+        {
+          team_id: "team-1",
+          played: 1,
+          won: 1,
+          drawn: 0,
+          lost: 0,
+          goals_for: 1,
+          goals_against: 0,
+          points: 3,
+        },
+        {
+          team_id: "team-2",
+          played: 1,
+          won: 0,
+          drawn: 1,
+          lost: 0,
+          goals_for: 0,
+          goals_against: 0,
+          points: 1,
+        },
+        {
+          team_id: "team-3",
+          played: 1,
+          won: 0,
+          drawn: 0,
+          lost: 1,
+          goals_for: 0,
+          goals_against: 1,
+          points: 0,
+        },
+      ],
+    };
+
+    render(
+      <PlayerProfile
+        player={player}
+        gameState={gameState}
+        isOwnClub
+        onClose={vi.fn()}
+      />,
+    );
+
+    const assistsRow = screen.getByText("Assists / 90").closest("div");
+    expect(assistsRow).not.toBeNull();
+    expect(within(assistsRow as HTMLElement).getByText("-")).toBeInTheDocument();
   });
 });

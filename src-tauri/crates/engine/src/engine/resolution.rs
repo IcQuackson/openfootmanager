@@ -174,15 +174,35 @@ fn resolve_attacking_third<R: Rng>(
     let def_eff = def_rating * def_mod * home_mod(def_side, ctx.config);
     let success = att_eff / (att_eff + def_eff);
     let zone = Zone::attacking_third(att_side);
+    let linkup_chance =
+        ((attacker.passing as f64 + attacker.vision as f64 + attacker.teamwork as f64) / 300.0)
+            .clamp(0.2, 0.7);
+    let attempts_linkup = rng.gen_range(0.0..1.0f64) < linkup_chance;
 
     if rng.gen_range(0.0..1.0f64) < success {
-        ctx.emit(
-            MatchEvent::new(minute, EventType::Dribble, att_side, zone).with_player(&attacker.id),
-        );
+        if attempts_linkup {
+            ctx.emit(
+                MatchEvent::new(minute, EventType::PassCompleted, att_side, zone)
+                    .with_player(&attacker.id),
+            );
+        } else {
+            ctx.emit(
+                MatchEvent::new(minute, EventType::Dribble, att_side, zone)
+                    .with_player(&attacker.id),
+            );
+        }
         ctx.ball_zone = Zone::attacking_box(att_side);
     } else {
-        let is_tackle = rng.gen_range(0.0..1.0f64) < 0.5;
-        if is_tackle {
+        if attempts_linkup {
+            ctx.emit(
+                MatchEvent::new(minute, EventType::PassIntercepted, att_side, zone)
+                    .with_player(&attacker.id),
+            );
+            ctx.emit(
+                MatchEvent::new(minute, EventType::Interception, def_side, zone)
+                    .with_player(&defender.id),
+            );
+        } else if rng.gen_range(0.0..1.0f64) < 0.5 {
             ctx.emit(
                 MatchEvent::new(minute, EventType::DribbleTackled, att_side, zone)
                     .with_player(&attacker.id)
@@ -207,7 +227,7 @@ fn resolve_attacking_third<R: Rng>(
             }
         }
         ctx.possession = def_side;
-        ctx.ball_zone = Zone::defensive_third(att_side);
+        ctx.ball_zone = Zone::defensive_third(def_side);
     }
 }
 

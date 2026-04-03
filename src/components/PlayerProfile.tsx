@@ -158,8 +158,33 @@ function per90(total: number, minutesPlayed: number): number {
 
 function percentileRank(value: number, values: number[]): number | null {
   if (values.length === 0) return null;
-  const lessOrEqual = values.filter((v) => v <= value).length;
-  return Math.round((lessOrEqual / values.length) * 100);
+  const EPSILON = 1e-9;
+  const lessCount = values.filter((v) => v < value - EPSILON).length;
+  const tieCount = values.filter((v) => Math.abs(v - value) <= EPSILON).length;
+  const percentile = ((lessCount + tieCount / 2) / values.length) * 100;
+  return Math.round(Math.min(100, Math.max(0, percentile)));
+}
+
+function percentileBadgeClassName(percentile: number | null): string {
+  if (percentile === null) {
+    return "bg-gray-200 text-gray-700 dark:bg-navy-600 dark:text-gray-200";
+  }
+  if (percentile >= 90) {
+    return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300";
+  }
+  if (percentile >= 75) {
+    return "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300";
+  }
+  if (percentile >= 60) {
+    return "bg-lime-100 text-lime-700 dark:bg-lime-900/40 dark:text-lime-300";
+  }
+  if (percentile >= 40) {
+    return "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300";
+  }
+  if (percentile >= 25) {
+    return "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300";
+  }
+  return "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300";
 }
 
 export default function PlayerProfile({
@@ -401,9 +426,7 @@ export default function PlayerProfile({
   }, [currentSeason, gameState.players, leagueTeamIds, player.id]);
 
   const percentilePool = useMemo(() => {
-    const samePosition = leagueBenchmarks.filter((b) => b.position === player.position);
-    if (samePosition.length >= 5) return samePosition;
-    return leagueBenchmarks;
+    return leagueBenchmarks.filter((b) => b.position === player.position);
   }, [leagueBenchmarks, player.position]);
 
   const playerPercentiles = useMemo(() => {
@@ -1271,6 +1294,10 @@ export default function PlayerProfile({
           <CardBody>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
               <StatBox
+                label={t("playerProfile.mins")}
+                value={detailedTotals.minutesPlayed}
+              />
+              <StatBox
                 label={t("playerProfile.shots", { defaultValue: "Shots" })}
                 value={detailedTotals.shots}
               />
@@ -1345,7 +1372,7 @@ export default function PlayerProfile({
                 count: percentilePool.length,
                 minutes: LEAGUE_PERCENTILE_MINUTES,
                 defaultValue:
-                  "Compared against {{count}} league players (minimum {{minutes}} minutes).",
+                  "Compared against {{count}} same-position league players (minimum {{minutes}} minutes).",
               })}
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -1698,6 +1725,7 @@ function ComparisonRow({
   percentile: number | null;
 }) {
   const valueLabel = typeof value === "number" ? value.toFixed(2) : value;
+  const percentileBadgeClass = percentileBadgeClassName(percentile);
 
   return (
     <div className="flex items-center justify-between rounded-lg bg-gray-50 dark:bg-navy-700 px-3 py-2">
@@ -1708,7 +1736,9 @@ function ComparisonRow({
         <span className="text-sm font-heading font-bold text-gray-800 dark:text-gray-100 tabular-nums">
           {valueLabel}
         </span>
-        <span className="text-xs font-heading font-bold rounded bg-gray-200 dark:bg-navy-600 px-2 py-0.5 tabular-nums text-gray-700 dark:text-gray-200">
+        <span
+          className={`text-xs font-heading font-bold rounded px-2 py-0.5 tabular-nums ${percentileBadgeClass}`}
+        >
           {percentile === null ? "-" : `P${percentile}`}
         </span>
       </div>

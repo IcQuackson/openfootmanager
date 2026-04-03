@@ -97,6 +97,7 @@ export default function Dashboard(): JSX.Element {
   const [navHistory, setNavHistory] = useState<
     Array<{ tab: string; playerId: string | null; teamId: string | null }>
   >([]);
+  const contentRef = useRef<HTMLDivElement | null>(null);
 
   // Fetch initial state
   useEffect(() => {
@@ -170,6 +171,12 @@ export default function Dashboard(): JSX.Element {
       return nextTabs;
     });
   }, [activeTab, gameState]);
+
+  useEffect(() => {
+    if (contentRef.current) {
+      contentRef.current.scrollTop = 0;
+    }
+  }, [activeTab, selectedPlayerId, selectedTeamId]);
 
   const seasonComplete = isLeagueSeasonComplete(gameState?.league);
 
@@ -514,7 +521,10 @@ export default function Dashboard(): JSX.Element {
         />
 
         {/* Dashboard Content */}
-        <div className="flex-1 overflow-auto p-6 bg-gray-100 dark:bg-navy-900">
+        <div
+          ref={contentRef}
+          className="flex-1 overflow-auto p-6 bg-gray-100 dark:bg-navy-900"
+        >
           {!selectedPlayerId && !selectedTeamId && (
             <DashboardAlerts
               alerts={dashboardAlerts}

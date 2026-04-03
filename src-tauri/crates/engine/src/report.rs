@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::event::{EventType, MatchEvent};
 use crate::types::Side;
@@ -99,6 +99,8 @@ impl MatchReport {
         home_possession_ticks: u32,
         away_possession_ticks: u32,
         total_minutes: u8,
+        home_player_ids: &[String],
+        away_player_ids: &[String],
     ) -> Self {
         let mut home_stats = TeamStats::default();
         let mut away_stats = TeamStats::default();
@@ -255,6 +257,15 @@ impl MatchReport {
             }
         }
 
+        populate_minutes_played(
+            &events,
+            home_player_ids,
+            away_player_ids,
+            total_minutes,
+            &mut player_stats,
+        );
+        populate_ratings(&mut player_stats, total_minutes);
+
         let total_poss = home_possession_ticks + away_possession_ticks;
         let home_possession = if total_poss > 0 {
             home_possession_ticks as f64 / total_poss as f64 * 100.0
@@ -274,4 +285,171 @@ impl MatchReport {
             total_minutes,
         }
     }
+}
+
+fn populate_minutes_played(
+    events: &[MatchEvent],
+    home_player_ids: &[String],
+    away_player_ids: &[String],
+    total_minutes: u8,
+    player_stats: &mut HashMap<String, PlayerMatchStats>,
+) {
+    populate_minutes_for_side(
+        events,
+        Side::Home,
+        home_player_ids,
+        total_minutes,
+        player_stats,
+    );
+    populate_minutes_for_side(
+        events,
+        Side::Away,
+        away_player_ids,
+        total_minutes,
+        player_stats,
+    );
+}
+
+fn populate_minutes_for_side(
+    events: &[MatchEvent],
+    side: Side,
+    final_player_ids: &[String],
+    total_minutes: u8,
+    player_stats: &mut HashMap<String, PlayerMatchStats>,
+) {
+    let mut subbed_on_ids = HashSet::new();
+    let mut subbed_off_ids = HashSet::new();
+    let mut sent_off_ids = HashSet::new();
+    let mut timeline: Vec<(u8, TimelineEvent)> = Vec::new();
+
+    for event in events.iter().filter(|event| event.side == side) {
+        match event.event_type {
+            EventType::Substitution => {
+                if let (Some(player_on_id), Some(player_off_id)) =
+                    (event.player_id.as_ref(), event.secondary_player_id.as_ref())
+                {
+                    subbed_on_ids.insert(player_on_id.clone());
+                    subbed_off_ids.insert(player_off_id.clone());
+                    timeline.push((
+                        event.minute,
+                        TimelineEvent::Substitution {
+                            player_off_id: player_off_id.clone(),
+                            player_on_id: player_on_id.clone(),
+                        },
+                    ));
+                }
+            }
+            EventType::RedCard | EventType::SecondYellow => {
+                if let Some(player_id) = event.player_id.as_ref() {
+                    sent_off_ids.insert(player_id.clone());
+                    timeline.push((event.minute, TimelineEvent::Dismissal(player_id.clone())));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut active_since: HashMap<String, u8> = HashMap::new();
+    let final_active_ids = final_player_ids
+        .iter()
+        .filter(|player_id| !sent_off_ids.contains(player_id.as_str()))
+        .cloned()
+        .collect::<HashSet<_>>();
+
+    for player_id in final_active_ids {
+        if !subbed_on_ids.contains(player_id.as_str()) {
+            active_since.insert(player_id, 0);
+        }
+    }
+
+    for player_id in subbed_off_ids.iter().chain(sent_off_ids.iter()) {
+        if !subbed_on_ids.contains(player_id.as_str()) {
+            active_since.entry(player_id.clone()).or_insert(0);
+        }
+    }
+
+    timeline.sort_by_key(|(minute, event)| {
+        let rank = match event {
+            TimelineEvent::Dismissal(_) => 0,
+            TimelineEvent::Substitution { .. } => 1,
+        };
+        (*minute, rank)
+    });
+
+    for (minute, event) in timeline {
+        match event {
+            TimelineEvent::Dismissal(player_id) => {
+                close_appearance(player_stats, &mut active_since, &player_id, minute);
+            }
+            TimelineEvent::Substitution {
+                player_off_id,
+                player_on_id,
+            } => {
+                close_appearance(player_stats, &mut active_since, &player_off_id, minute);
+                active_since.insert(player_on_id, minute);
+            }
+        }
+    }
+
+    for (player_id, start_minute) in active_since {
+        let minutes_played = total_minutes.saturating_sub(start_minute);
+        player_stats.entry(player_id).or_default().minutes_played = minutes_played;
+    }
+}
+
+fn close_appearance(
+    player_stats: &mut HashMap<String, PlayerMatchStats>,
+    active_since: &mut HashMap<String, u8>,
+    player_id: &str,
+    minute: u8,
+) {
+    if let Some(start_minute) = active_since.remove(player_id) {
+        let minutes_played = minute.saturating_sub(start_minute);
+        player_stats
+            .entry(player_id.to_string())
+            .or_default()
+            .minutes_played = minutes_played;
+    }
+}
+
+fn populate_ratings(player_stats: &mut HashMap<String, PlayerMatchStats>, total_minutes: u8) {
+    let full_match_minutes = total_minutes.max(1) as f32;
+
+    for stats in player_stats.values_mut() {
+        if stats.minutes_played == 0 {
+            continue;
+        }
+
+        let minutes_factor = stats.minutes_played as f32 / full_match_minutes;
+        let pass_accuracy_bonus = if stats.passes_attempted > 0 {
+            let accuracy = stats.passes_completed as f32 / stats.passes_attempted as f32;
+            (accuracy - 0.7) * 1.5
+        } else {
+            0.0
+        };
+
+        let rating = 6.0
+            + (minutes_factor - 0.5) * 0.4
+            + stats.goals as f32 * 1.5
+            + stats.assists as f32 * 1.0
+            + stats.shots_on_target as f32 * 0.15
+            + stats.shots as f32 * 0.05
+            + stats.passes_completed as f32 * 0.01
+            + pass_accuracy_bonus
+            + stats.tackles_won as f32 * 0.12
+            + stats.interceptions as f32 * 0.12
+            - stats.fouls_committed as f32 * 0.08
+            - stats.yellow_cards as f32 * 0.35
+            - stats.red_cards as f32 * 1.5;
+
+        stats.rating = rating.clamp(1.0, 10.0);
+    }
+}
+
+enum TimelineEvent {
+    Dismissal(String),
+    Substitution {
+        player_off_id: String,
+        player_on_id: String,
+    },
 }

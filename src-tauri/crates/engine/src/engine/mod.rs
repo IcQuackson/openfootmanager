@@ -68,6 +68,16 @@ pub fn simulate_with_rng<R: Rng>(
         simulate_minute(&mut ctx, minute, rng);
     }
     let total_minutes = match_end;
+    let home_player_ids = home
+        .players
+        .iter()
+        .map(|player| player.id.clone())
+        .collect::<Vec<_>>();
+    let away_player_ids = away
+        .players
+        .iter()
+        .map(|player| player.id.clone())
+        .collect::<Vec<_>>();
     ctx.emit(MatchEvent::new(
         match_end,
         EventType::FullTime,
@@ -80,6 +90,8 @@ pub fn simulate_with_rng<R: Rng>(
         ctx.home_possession_ticks,
         ctx.away_possession_ticks,
         total_minutes,
+        &home_player_ids,
+        &away_player_ids,
     )
 }
 
