@@ -1,7 +1,7 @@
 # Engine Tactic Matchups
 
-Recorded: 2026-04-03T15:17:35Z
-Commit: 9fa4bcc (custom)
+Recorded: 2026-04-03T15:19:06Z
+Commit: f71e82d (custom)
 Matches per leg: 50
 
 Each section lists the tactic overall first, then its full opponent table ordered from strongest to weakest matchup.

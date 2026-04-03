@@ -1,11 +1,11 @@
 {
   "metadata": {
-    "recorded_at": "2026-04-03T15:17:35Z",
-    "commit_sha": "9fa4bccd8ff3653cd0c4b56c223d73a18676bf18",
-    "commit_short": "9fa4bcc",
+    "recorded_at": "2026-04-03T15:19:06Z",
+    "commit_sha": "f71e82dc2bf2d83990c5a3fc4e9c70a6766ef776",
+    "commit_short": "f71e82d",
     "branch": "custom",
-    "commit_date": "2026-04-03T16:06:45+01:00",
-    "dirty": true
+    "commit_date": "2026-04-03T16:18:41+01:00",
+    "dirty": false
   },
   "benchmark": {
     "matches_per_leg": 50,

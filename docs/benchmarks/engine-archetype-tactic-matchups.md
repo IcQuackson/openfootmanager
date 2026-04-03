@@ -1,7 +1,7 @@
 # Engine Archetype Tactic Matchups
 
-Recorded: 2026-04-03T15:17:35Z
-Commit: 9fa4bcc (custom)
+Recorded: 2026-04-03T15:19:06Z
+Commit: f71e82d (custom)
 Matches per leg: 50
 
 Each section shows the tactic template overall, then which opponent squad types it thrives with or suffers against, followed by the full template-by-template matchup table.
