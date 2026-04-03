@@ -26,3 +26,35 @@ Run a smaller local sample into a temporary history file:
 ```bash
 bash scripts/record-engine-benchmark.sh --matches 100 --history-file /tmp/engine-history.jsonl --allow-dirty
 ```
+
+## Tactic Matrix Benchmark
+
+`benchmark:engine:tactics` runs a full tactic-vs-tactic matrix and writes artifacts under `docs/benchmarks`:
+
+- `engine-tactic-matrix.json`
+- `engine-tactic-rankings.md`
+- `engine-tactic-matchups.md`
+
+Default scenario:
+
+- `200` matches per leg
+- home/away balancing for every unordered tactic pair
+- `6` supported shapes by current engine interpretation
+- `6` play styles
+- equal-quality role-specific archetype squads
+
+Run it:
+
+```bash
+npm run benchmark:engine:tactics
+```
+
+Run a smaller local sample:
+
+```bash
+bash scripts/render-tactic-matrix-benchmark.sh --matches-per-leg 20 --allow-dirty
+```
+
+Important engine note:
+
+- `4-5-1`, `4-2-3-1`, and `4-1-4-1` currently collapse to the same tactical shape in the benchmark because the engine only distinguishes defender/midfielder/forward counts there.
