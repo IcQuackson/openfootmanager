@@ -11,6 +11,8 @@
     "test:watch": "vitest",
     "benchmark:engine:record": "bash scripts/record-engine-benchmark.sh",
     "benchmark:engine:tactics": "bash scripts/render-tactic-matrix-benchmark.sh",
+    "benchmark:engine:role-traits": "bash scripts/render-role-trait-matrix-benchmark.sh",
+    "benchmark:engine:fit-profiles": "bash scripts/render-fit-profile-matrix-benchmark.sh",
     "tauri": "tauri"
   },
   "dependencies": {
