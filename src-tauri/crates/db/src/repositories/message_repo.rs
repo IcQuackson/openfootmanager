@@ -1,5 +1,6 @@
 use domain::message::{InboxMessage, MessageCategory, MessagePriority};
 use rusqlite::{Connection, params};
+use std::collections::HashMap;
 
 /// Insert or replace a message row.
 pub fn upsert_message(conn: &Connection, msg: &InboxMessage) -> Result<(), String> {
@@ -52,6 +53,45 @@ pub fn upsert_messages(conn: &Connection, messages: &[InboxMessage]) -> Result<(
     Ok(())
 }
 
+fn normalize_i18n_params_value(value: Option<&serde_json::Value>) -> HashMap<String, String> {
+    let Some(serde_json::Value::Object(map)) = value else {
+        return HashMap::new();
+    };
+
+    map.iter()
+        .filter_map(|(key, value)| match value {
+            serde_json::Value::String(v) => Some((key.clone(), v.clone())),
+            serde_json::Value::Number(v) => Some((key.clone(), v.to_string())),
+            serde_json::Value::Bool(v) => Some((key.clone(), v.to_string())),
+            _ => None,
+        })
+        .collect()
+}
+
+pub fn normalize_message(message: InboxMessage) -> InboxMessage {
+    let mut normalized = message;
+
+    if normalized.sender_role.trim().is_empty() {
+        normalized.sender_role.clear();
+    }
+
+    normalized
+}
+
+pub fn normalize_messages(messages: &mut [InboxMessage]) -> bool {
+    let mut changed = false;
+
+    for message in messages.iter_mut() {
+        let normalized = normalize_message(message.clone());
+        if normalized != *message {
+            *message = normalized;
+            changed = true;
+        }
+    }
+
+    changed
+}
+
 fn parse_category(s: &str) -> MessageCategory {
     match s {
         "Welcome" => MessageCategory::Welcome,
@@ -82,6 +122,14 @@ fn parse_priority(s: &str) -> MessagePriority {
 
 /// Load all messages ordered by date descending.
 pub fn load_all_messages(conn: &Connection) -> Result<Vec<InboxMessage>, String> {
+    let (messages, _) = load_all_messages_with_repair_state(conn)?;
+    Ok(messages)
+}
+
+/// Load all messages and indicate whether any row needed compatibility repair.
+pub fn load_all_messages_with_repair_state(
+    conn: &Connection,
+) -> Result<(Vec<InboxMessage>, bool), String> {
     let mut stmt = conn
         .prepare(
             "SELECT id, subject, body, sender, sender_role, date, read, category, priority, actions, context, i18n
@@ -94,13 +142,16 @@ pub fn load_all_messages(conn: &Connection) -> Result<Vec<InboxMessage>, String>
         .map_err(|e| format!("Failed to query messages: {}", e))?;
 
     let mut messages = Vec::new();
+    let mut repaired = false;
     for row in rows {
-        messages.push(row.map_err(|e| format!("Failed to read message: {}", e))?);
+        let (message, row_repaired) = row.map_err(|e| format!("Failed to read message: {}", e))?;
+        messages.push(message);
+        repaired |= row_repaired;
     }
-    Ok(messages)
+    Ok((messages, repaired))
 }
 
-fn row_to_message(row: &rusqlite::Row) -> rusqlite::Result<InboxMessage> {
+fn row_to_message(row: &rusqlite::Row) -> rusqlite::Result<(InboxMessage, bool)> {
     let read_int: i32 = row.get(6)?;
     let category_str: String = row.get(7)?;
     let priority_str: String = row.get(8)?;
@@ -108,9 +159,28 @@ fn row_to_message(row: &rusqlite::Row) -> rusqlite::Result<InboxMessage> {
     let context_json: String = row.get(10)?;
     let i18n_json: String = row.get(11)?;
 
-    let i18n: serde_json::Value = serde_json::from_str(&i18n_json).unwrap_or_default();
+    let (actions, actions_repaired) = match serde_json::from_str(&actions_json) {
+        Ok(actions) => (actions, false),
+        Err(_) => (Vec::new(), actions_json.trim() != "[]"),
+    };
+    let (context, context_repaired) = match serde_json::from_str(&context_json) {
+        Ok(context) => (context, false),
+        Err(_) => (
+            domain::message::MessageContext::default(),
+            context_json.trim() != "{}",
+        ),
+    };
+    let (i18n, i18n_repaired) = match serde_json::from_str(&i18n_json) {
+        Ok(i18n) => (i18n, false),
+        Err(_) => (serde_json::Value::default(), i18n_json.trim() != "{}"),
+    };
+    let strict_i18n_params = i18n
+        .get("i18n_params")
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
+    let repaired_i18n_params = normalize_i18n_params_value(i18n.get("i18n_params"));
+    let i18n_params_repaired = strict_i18n_params.is_none() && !repaired_i18n_params.is_empty();
 
-    Ok(InboxMessage {
+    let raw_message = InboxMessage {
         id: row.get(0)?,
         subject: row.get(1)?,
         body: row.get(2)?,
@@ -120,8 +190,8 @@ fn row_to_message(row: &rusqlite::Row) -> rusqlite::Result<InboxMessage> {
         read: read_int != 0,
         category: parse_category(&category_str),
         priority: parse_priority(&priority_str),
-        actions: serde_json::from_str(&actions_json).unwrap_or_default(),
-        context: serde_json::from_str(&context_json).unwrap_or_default(),
+        actions,
+        context,
         subject_key: i18n
             .get("subject_key")
             .and_then(|v| v.as_str())
@@ -138,18 +208,26 @@ fn row_to_message(row: &rusqlite::Row) -> rusqlite::Result<InboxMessage> {
             .get("sender_role_key")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
-        i18n_params: i18n
-            .get("i18n_params")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default(),
-    })
+        i18n_params: strict_i18n_params.unwrap_or(repaired_i18n_params),
+    };
+    let normalized_message = normalize_message(raw_message.clone());
+    let normalized_repaired = normalized_message != raw_message;
+
+    Ok((
+        normalized_message,
+        actions_repaired
+            || context_repaired
+            || i18n_repaired
+            || i18n_params_repaired
+            || normalized_repaired,
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::game_database::GameDatabase;
-    use std::collections::HashMap;
+    use rusqlite::params;
 
     fn test_db() -> GameDatabase {
         GameDatabase::open_in_memory().unwrap()
@@ -223,5 +301,68 @@ mod tests {
             all[0].i18n_params.get("team").map(|s| s.as_str()),
             Some("London FC")
         );
+    }
+
+    #[test]
+    fn test_load_message_stringifies_scalar_i18n_params() {
+        let db = test_db();
+        db.conn()
+            .execute(
+                "INSERT INTO messages
+                 (id, subject, body, sender, sender_role, date, read, category, priority, actions, context, i18n)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                params![
+                    "msg-raw",
+                    "Raw",
+                    "",
+                    "Board",
+                    "",
+                    "2026-07-01",
+                    0,
+                    "System",
+                    "Normal",
+                    "[]",
+                    "{}",
+                    r#"{"i18n_params":{"amount":250000,"urgent":true,"nested":{"bad":1}}}"#,
+                ],
+            )
+            .unwrap();
+
+        let all = load_all_messages(db.conn()).unwrap();
+        assert_eq!(
+            all[0].i18n_params.get("amount"),
+            Some(&"250000".to_string())
+        );
+        assert_eq!(all[0].i18n_params.get("urgent"), Some(&"true".to_string()));
+        assert!(!all[0].i18n_params.contains_key("nested"));
+    }
+
+    #[test]
+    fn test_load_all_messages_reports_repairs() {
+        let db = test_db();
+        db.conn()
+            .execute(
+                "INSERT INTO messages
+                 (id, subject, body, sender, sender_role, date, read, category, priority, actions, context, i18n)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                params![
+                    "msg-repair",
+                    "Repair",
+                    "",
+                    "Board",
+                    "",
+                    "2026-07-01",
+                    0,
+                    "System",
+                    "Normal",
+                    "not-json",
+                    "not-json",
+                    r#"{"i18n_params":{"amount":250000}}"#,
+                ],
+            )
+            .unwrap();
+
+        let (_, repaired) = load_all_messages_with_repair_state(db.conn()).unwrap();
+        assert!(repaired);
     }
 }

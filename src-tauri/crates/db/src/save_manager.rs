@@ -154,6 +154,8 @@ impl SaveManager {
 
         let db = GameDatabase::open(&db_path)?;
         let mut game = self.read_game_from_db(&db)?;
+        let (_, messages_needed_repair) =
+            message_repo::load_all_messages_with_repair_state(db.conn())?;
         let mut needs_resave = false;
 
         if canonicalize_game_starting_xi_ids(&mut game) {
@@ -167,6 +169,14 @@ impl SaveManager {
         if player_identity::upgrade_game_player_identities(&mut game) {
             info!(
                 "[save_manager] upgraded legacy player identities for save {}",
+                save_id
+            );
+            needs_resave = true;
+        }
+
+        if messages_needed_repair || message_repo::normalize_messages(&mut game.messages) {
+            info!(
+                "[save_manager] normalized legacy/malformed inbox messages for save {}",
                 save_id
             );
             needs_resave = true;
@@ -553,6 +563,7 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
     use domain::league::{Fixture, FixtureCompetition, FixtureStatus, League, StandingEntry};
+    use domain::message::InboxMessage;
     use domain::player::{Footedness, Player, PlayerAttributes, Position};
     use domain::staff::{StaffAttributes, StaffRole};
     use domain::team::Team;
@@ -955,6 +966,61 @@ mod tests {
         let starting_xi_ids: Vec<String> = serde_json::from_str(&starting_xi_json).unwrap();
 
         assert_eq!(starting_xi_ids, team.starting_xi_ids);
+    }
+
+    #[test]
+    fn test_load_game_repairs_and_resaves_malformed_messages() {
+        let dir = tempfile::tempdir().unwrap();
+        let saves_dir = dir.path().join("saves");
+
+        let mut sm = SaveManager::init(&saves_dir).unwrap();
+        let mut game = sample_game();
+        game.messages.push(InboxMessage::new(
+            "msg-001".to_string(),
+            "Message".to_string(),
+            String::new(),
+            "Board".to_string(),
+            "2026-08-15".to_string(),
+        ));
+
+        let save_id = sm.create_save(&game, "Message Repair").unwrap();
+        let db_filename = sm.list_saves()[0].db_filename.clone();
+        let db_path = saves_dir.join(db_filename);
+
+        {
+            let db = GameDatabase::open(&db_path).unwrap();
+            db.conn()
+                .execute(
+                    "UPDATE messages SET actions = ?1, context = ?2, i18n = ?3 WHERE id = ?4",
+                    params![
+                        "not-json",
+                        "not-json",
+                        r#"{"i18n_params":{"amount":250000,"urgent":true}}"#,
+                        "msg-001",
+                    ],
+                )
+                .unwrap();
+        }
+
+        let loaded = sm.load_game(&save_id).unwrap();
+        assert_eq!(loaded.messages.len(), 1);
+        assert!(loaded.messages[0].actions.is_empty());
+        assert_eq!(
+            loaded.messages[0].i18n_params.get("amount"),
+            Some(&"250000".to_string())
+        );
+        assert_eq!(
+            loaded.messages[0].i18n_params.get("urgent"),
+            Some(&"true".to_string())
+        );
+
+        let db = GameDatabase::open(&db_path).unwrap();
+        let repaired_messages = message_repo::load_all_messages(db.conn()).unwrap();
+        assert!(repaired_messages[0].actions.is_empty());
+        assert_eq!(
+            repaired_messages[0].i18n_params.get("amount"),
+            Some(&"250000".to_string())
+        );
     }
 
     #[test]

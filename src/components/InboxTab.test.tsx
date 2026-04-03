@@ -310,6 +310,39 @@ describe("InboxTab", function (): void {
     ).toBeInTheDocument();
   });
 
+  it("renders malformed persisted messages instead of blanking the inbox", function (): void {
+    renderInboxTab({
+      gameState: createGameState([
+        {
+          ...(createMessage({
+            id: "m1",
+            read: true,
+            subject: "Recovered Message",
+            body: "",
+          }) as unknown as Record<string, unknown>),
+          actions: [null, { id: "respond", resolved: false, action_type: null }],
+          i18n_params: {
+            amount: 250000,
+            nested: { invalid: true },
+          },
+          context: {
+            team_id: null,
+            player_id: null,
+            fixture_id: null,
+            match_result: null,
+            delegated_renewal_report: { cases: null },
+          },
+        } as unknown as MessageData,
+      ]),
+      initialMessageId: "m1",
+    });
+
+    expect(screen.getAllByText("Recovered Message")).toHaveLength(2);
+    expect(
+      screen.getByText("No message content available for this item."),
+    ).toBeInTheDocument();
+  });
+
   it("confirms before deleting selected messages in bulk", async function (): Promise<void> {
     const onGameUpdate = vi.fn();
     const updatedGameState = createGameState([

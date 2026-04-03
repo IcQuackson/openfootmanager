@@ -241,6 +241,57 @@ describe("resolveAction", () => {
   });
 });
 
+describe("resolveMessage hardening", () => {
+  it("stringifies scalar i18n params instead of crashing", () => {
+    const result = resolveMessage(
+      {
+        ...makeMessage({
+          body_key: "test.body",
+        }),
+        i18n_params: {
+          name: 42,
+        } as unknown as Record<string, string>,
+      },
+    );
+
+    expect(result.body).toBe("Hello 42, welcome!");
+  });
+
+  it("tolerates malformed persisted message payloads", () => {
+    const malformedMessage = {
+      id: "msg_broken",
+      subject: "fallback subject",
+      body: "",
+      sender: "assistant",
+      sender_role: "role",
+      date: "2026-08-01",
+      read: false,
+      category: "System",
+      priority: "Normal",
+      actions: [null, { id: "respond", resolved: false, action_type: null }],
+      context: {
+        team_id: null,
+        player_id: null,
+        fixture_id: null,
+        match_result: null,
+        delegated_renewal_report: { cases: null },
+      },
+      i18n_params: {
+        amount: 250000,
+        nested: { bad: true },
+      },
+    } as unknown as MessageData;
+
+    const result = resolveMessage(malformedMessage);
+
+    expect(result.id).toBe("msg_broken");
+    expect(result.i18n_params).toEqual({ amount: "250000" });
+    expect(result.actions).toHaveLength(1);
+    expect(result.actions[0].id).toBe("respond");
+    expect(result.context.delegated_renewal_report).toBeUndefined();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // resolveMessage
 // ---------------------------------------------------------------------------

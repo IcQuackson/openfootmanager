@@ -7,6 +7,197 @@ import type {
   BoardObjective,
 } from '../store/gameStore';
 
+function normalizeStringRecord(raw: unknown): Record<string, string> | undefined {
+  if (!raw || typeof raw !== 'object') {
+    return undefined;
+  }
+
+  const normalizedEntries = Object.entries(raw).flatMap(([key, value]) => {
+    if (typeof value === 'string') {
+      return [[key, value] as const];
+    }
+
+    if (
+      typeof value === 'number' ||
+      typeof value === 'boolean' ||
+      typeof value === 'bigint'
+    ) {
+      return [[key, String(value)] as const];
+    }
+
+    return [];
+  });
+
+  if (normalizedEntries.length === 0) {
+    return undefined;
+  }
+
+  return Object.fromEntries(normalizedEntries);
+}
+
+function normalizeActionOption(option: unknown): MessageActionOption | null {
+  if (!option || typeof option !== 'object') {
+    return null;
+  }
+
+  const raw = option as Partial<MessageActionOption>;
+  const id = typeof raw.id === 'string' ? raw.id : '';
+
+  if (id.length === 0) {
+    return null;
+  }
+
+  return {
+    id,
+    label: typeof raw.label === 'string' ? raw.label : '',
+    description: typeof raw.description === 'string' ? raw.description : '',
+    label_key: typeof raw.label_key === 'string' ? raw.label_key : undefined,
+    description_key:
+      typeof raw.description_key === 'string'
+        ? raw.description_key
+        : undefined,
+  };
+}
+
+function normalizeAction(action: unknown): MessageAction | null {
+  if (!action || typeof action !== 'object') {
+    return null;
+  }
+
+  const raw = action as Partial<MessageAction> & {
+    action_type?: unknown;
+    resolved?: unknown;
+  };
+  const id = typeof raw.id === 'string' ? raw.id : '';
+
+  if (id.length === 0) {
+    return null;
+  }
+
+  let actionType: MessageAction['action_type'] = 'Acknowledge';
+
+  if (raw.action_type === 'Acknowledge' || raw.action_type === 'Dismiss') {
+    actionType = raw.action_type;
+  } else if (raw.action_type && typeof raw.action_type === 'object') {
+    if (
+      'NavigateTo' in raw.action_type &&
+      raw.action_type.NavigateTo &&
+      typeof raw.action_type.NavigateTo === 'object' &&
+      'route' in raw.action_type.NavigateTo &&
+      typeof raw.action_type.NavigateTo.route === 'string'
+    ) {
+      actionType = {
+        NavigateTo: {
+          route: raw.action_type.NavigateTo.route,
+        },
+      };
+    } else if (
+      'ChooseOption' in raw.action_type &&
+      raw.action_type.ChooseOption &&
+      typeof raw.action_type.ChooseOption === 'object' &&
+      'options' in raw.action_type.ChooseOption &&
+      Array.isArray(raw.action_type.ChooseOption.options)
+    ) {
+      actionType = {
+        ChooseOption: {
+          options: raw.action_type.ChooseOption.options
+            .map(normalizeActionOption)
+            .filter((option): option is MessageActionOption => option !== null),
+        },
+      };
+    }
+  }
+
+  return {
+    id,
+    label: typeof raw.label === 'string' ? raw.label : '',
+    action_type: actionType,
+    resolved: raw.resolved === true,
+    label_key: typeof raw.label_key === 'string' ? raw.label_key : undefined,
+  };
+}
+
+function normalizeMessageContext(context: unknown): MessageData['context'] {
+  const baseContext: MessageData['context'] = {
+    team_id: null,
+    player_id: null,
+    fixture_id: null,
+    match_result: null,
+  };
+
+  if (!context || typeof context !== 'object') {
+    return baseContext;
+  }
+
+  const raw = context as MessageData['context'] & {
+    delegated_renewal_report?: unknown;
+    scout_report?: unknown;
+    match_result?: unknown;
+  };
+
+  const normalizedContext: MessageData['context'] = {
+    team_id: typeof raw.team_id === 'string' ? raw.team_id : null,
+    player_id: typeof raw.player_id === 'string' ? raw.player_id : null,
+    fixture_id: typeof raw.fixture_id === 'string' ? raw.fixture_id : null,
+    match_result: null,
+  };
+
+  if (
+    raw.match_result &&
+    typeof raw.match_result === 'object' &&
+    typeof raw.match_result.home_team_id === 'string' &&
+    typeof raw.match_result.away_team_id === 'string' &&
+    typeof raw.match_result.home_goals === 'number' &&
+    typeof raw.match_result.away_goals === 'number'
+  ) {
+    normalizedContext.match_result = {
+      home_team_id: raw.match_result.home_team_id,
+      away_team_id: raw.match_result.away_team_id,
+      home_goals: raw.match_result.home_goals,
+      away_goals: raw.match_result.away_goals,
+    };
+  }
+
+  if (raw.scout_report && typeof raw.scout_report === 'object') {
+    normalizedContext.scout_report = raw.scout_report;
+  }
+
+  if (
+    raw.delegated_renewal_report &&
+    typeof raw.delegated_renewal_report === 'object' &&
+    Array.isArray(raw.delegated_renewal_report.cases)
+  ) {
+    normalizedContext.delegated_renewal_report = {
+      success_count:
+        typeof raw.delegated_renewal_report.success_count === 'number'
+          ? raw.delegated_renewal_report.success_count
+          : 0,
+      failure_count:
+        typeof raw.delegated_renewal_report.failure_count === 'number'
+          ? raw.delegated_renewal_report.failure_count
+          : 0,
+      stalled_count:
+        typeof raw.delegated_renewal_report.stalled_count === 'number'
+          ? raw.delegated_renewal_report.stalled_count
+          : 0,
+      cases: raw.delegated_renewal_report.cases.filter(
+        (renewalCase): renewalCase is NonNullable<
+          MessageData['context']['delegated_renewal_report']
+        >['cases'][number] =>
+          Boolean(
+            renewalCase &&
+              typeof renewalCase === 'object' &&
+              typeof renewalCase.player_id === 'string' &&
+              typeof renewalCase.player_name === 'string' &&
+              typeof renewalCase.status === 'string',
+          ),
+      ),
+    };
+  }
+
+  return normalizedContext;
+}
+
 function normalizeMessage(msg: MessageData): MessageData {
   const raw = msg as MessageData & {
     subject?: unknown;
@@ -20,24 +211,31 @@ function normalizeMessage(msg: MessageData): MessageData {
 
   return {
     ...msg,
+    id: typeof raw.id === 'string' ? raw.id : '',
     subject: typeof raw.subject === 'string' ? raw.subject : '',
     body: typeof raw.body === 'string' ? raw.body : '',
     sender: typeof raw.sender === 'string' ? raw.sender : '',
     sender_role: typeof raw.sender_role === 'string' ? raw.sender_role : '',
-    actions: Array.isArray(raw.actions) ? raw.actions : [],
-    context:
-      raw.context && typeof raw.context === 'object'
-        ? (raw.context as MessageData['context'])
-        : {
-            team_id: null,
-            player_id: null,
-            fixture_id: null,
-            match_result: null,
-          },
-    i18n_params:
-      raw.i18n_params && typeof raw.i18n_params === 'object'
-        ? (raw.i18n_params as Record<string, string>)
+    date: typeof raw.date === 'string' ? raw.date : '',
+    read: raw.read === true,
+    category: typeof raw.category === 'string' ? raw.category : 'System',
+    priority: typeof raw.priority === 'string' ? raw.priority : 'Normal',
+    actions: Array.isArray(raw.actions)
+      ? raw.actions
+          .map(normalizeAction)
+          .filter((action): action is MessageAction => action !== null)
+      : [],
+    context: normalizeMessageContext(raw.context),
+    subject_key:
+      typeof raw.subject_key === 'string' ? raw.subject_key : undefined,
+    body_key: typeof raw.body_key === 'string' ? raw.body_key : undefined,
+    sender_key:
+      typeof raw.sender_key === 'string' ? raw.sender_key : undefined,
+    sender_role_key:
+      typeof raw.sender_role_key === 'string'
+        ? raw.sender_role_key
         : undefined,
+    i18n_params: normalizeStringRecord(raw.i18n_params),
   };
 }
 
@@ -301,28 +499,32 @@ function resolveLegacyDelegatedRenewalsMessage(
  * Resolve all translatable fields on a message, returning a copy with resolved strings.
  */
 export function resolveMessage(msg: MessageData): MessageData {
-  const normalizedMessage = normalizeMessage(msg);
-  const inferredParams =
-    normalizedMessage.i18n_params ??
-    inferLegacyDelegatedRenewalsParams(normalizedMessage);
-  const p = resolveParamValues(inferredParams);
-  const resolved = {
-    ...normalizedMessage,
-    i18n_params: inferredParams,
-    subject: resolve(normalizedMessage.subject_key, normalizedMessage.subject, p),
-    body: resolve(normalizedMessage.body_key, normalizedMessage.body, p),
-    sender: resolve(normalizedMessage.sender_key, normalizedMessage.sender, p),
-    sender_role: resolve(
-      normalizedMessage.sender_role_key,
-      normalizedMessage.sender_role,
-      p,
-    ),
-    actions: normalizedMessage.actions.map((action) =>
-      resolveAction(action, normalizedMessage.id, p),
-    ),
-  };
+  try {
+    const normalizedMessage = normalizeMessage(msg);
+    const inferredParams =
+      normalizedMessage.i18n_params ??
+      inferLegacyDelegatedRenewalsParams(normalizedMessage);
+    const p = resolveParamValues(inferredParams);
+    const resolved = {
+      ...normalizedMessage,
+      i18n_params: inferredParams,
+      subject: resolve(normalizedMessage.subject_key, normalizedMessage.subject, p),
+      body: resolve(normalizedMessage.body_key, normalizedMessage.body, p),
+      sender: resolve(normalizedMessage.sender_key, normalizedMessage.sender, p),
+      sender_role: resolve(
+        normalizedMessage.sender_role_key,
+        normalizedMessage.sender_role,
+        p,
+      ),
+      actions: normalizedMessage.actions.map((action) =>
+        resolveAction(action, normalizedMessage.id, p),
+      ),
+    };
 
-  return resolveLegacyDelegatedRenewalsMessage(resolved, p);
+    return resolveLegacyDelegatedRenewalsMessage(resolved, p);
+  } catch {
+    return normalizeMessage(msg);
+  }
 }
 
 /**

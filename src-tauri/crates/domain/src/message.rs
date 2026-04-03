@@ -27,7 +27,7 @@ pub enum MessagePriority {
     Urgent,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MessageAction {
     pub id: String,
     pub label: String,
@@ -38,7 +38,7 @@ pub struct MessageAction {
     pub label_key: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ActionType {
     Acknowledge,
     NavigateTo { route: String },
@@ -46,7 +46,7 @@ pub enum ActionType {
     Dismiss,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ActionOption {
     pub id: String,
     pub label: String,
@@ -57,7 +57,7 @@ pub struct ActionOption {
     pub description_key: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct InboxMessage {
     pub id: String,
     pub subject: String,
@@ -88,7 +88,7 @@ pub struct InboxMessage {
     pub i18n_params: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct MessageContext {
     pub team_id: Option<String>,
     pub player_id: Option<String>,
@@ -100,7 +100,7 @@ pub struct MessageContext {
     pub delegated_renewal_report: Option<DelegatedRenewalReportData>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DelegatedRenewalReportData {
     pub success_count: u32,
     pub failure_count: u32,
@@ -108,7 +108,7 @@ pub struct DelegatedRenewalReportData {
     pub cases: Vec<DelegatedRenewalCaseData>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DelegatedRenewalCaseData {
     pub player_id: String,
     pub player_name: String,
@@ -123,7 +123,7 @@ pub struct DelegatedRenewalCaseData {
     pub note_params: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ScoutReportData {
     pub player_id: String,
     pub player_name: String,
@@ -150,7 +150,7 @@ pub struct ScoutReportData {
     pub confidence_key: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ContextMatchResult {
     pub home_team_id: String,
     pub away_team_id: String,
