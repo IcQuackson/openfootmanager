@@ -295,6 +295,38 @@ Observed sample outcome after implementation:
   - `3-5-2 Counter`: `1.286 -> 1.579 -> 2.097`
   - `3-4-3 Counter`: `1.189 -> 1.606 -> 1.965`
 
+### Fix 9: HighPress fit payoff and weak-shape repair
+
+This pass stays inside the current philosophy and targets two concrete issues:
+
+- `HighPress` should get a clearer payoff when the squad actually fits it
+- `4-3-3` and `5-3-2` should stop lagging behind other generic shapes
+
+Changes:
+
+- increased `HighPress` proactive defensive intent when the player has pressing-friendly traits
+- reduced passive defensive fallback for high-press-fit players
+- increased `WingBackAttack` and `WideProgressor` support influence slightly
+- raised `4-3-3` support/box-presence and normalized its rest defense
+- raised `5-3-2` buildup/support/box-presence while keeping its defensive identity
+
+Expected result:
+
+- ideal-fit `HighPress` systems should open a clearer gap over their bad-fit versions
+- average `HighPress` should still stay below the top generic styles
+- `4-3-3` and `5-3-2` should move out of the bottom two generic shapes
+
+Observed sample outcome after implementation:
+
+- balanced `4-4-2` baseline stayed unchanged at `2.95` goals per match, which is expected because this pass did not target that scenario
+- `4-3-3` generic shape improved from `1.242` to `1.346` average PPG
+- `5-3-2` generic shape improved from `1.236` to `1.330` average PPG
+- `HighPress` remained weak on average (`1.253 -> 1.248`), so it did not become flatly strong
+- ideal-fit `HighPress` payoff improved in the targeted shapes:
+  - `4-3-3 HighPress`: `1.097 -> 1.486 -> 1.678` with `ideal-bad` gap `0.496`
+  - `5-3-2 HighPress`: `1.283 -> 1.468 -> 1.672` with `ideal-bad` gap `0.389`
+- mechanically overpowered watchlist remained empty
+
 ## Benchmark workflow
 
 For each fix:

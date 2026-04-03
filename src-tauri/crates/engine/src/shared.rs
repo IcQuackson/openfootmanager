@@ -781,12 +781,22 @@ pub(crate) fn choose_defensive_intent<R: Rng>(
     context: IntentContext,
     rng: &mut R,
 ) -> ActionIntent {
+    let high_press_fit = if matches!(style, PlayStyle::HighPress) {
+        trait_strength(snap, "Engine") * 0.30
+            + trait_strength(snap, "Tireless") * 0.28
+            + trait_strength(snap, "BallWinner") * 0.32
+            + trait_strength(snap, "TransitionAnticipator") * 0.24
+            + trait_strength(snap, "TeamPlayer") * 0.14
+    } else {
+        0.0
+    };
     let weights = vec![
         (ActionIntent::StepInInterception, {
             0.18 + style_profile(style).press_intensity * 0.08
                 + context.rest_defense * 0.18
                 + trait_strength(snap, "PassingLaneThief") * 0.95
                 + trait_strength(snap, "EarlyScanner") * 0.18
+                + high_press_fit * 0.40
                 + if context.chasing_game { 0.12 } else { 0.0 }
         }),
         (ActionIntent::ContainAndShowWide, {
@@ -794,12 +804,14 @@ pub(crate) fn choose_defensive_intent<R: Rng>(
                 + context.width_access * 0.08
                 + trait_strength(snap, "ContainmentSpecialist") * 0.95
                 + trait_strength(snap, "BodyAngleManipulator") * 0.45
+                - high_press_fit * 0.08
                 + if context.protecting_lead { 0.20 } else { 0.0 }
         }),
         (ActionIntent::TacticalFoulStop, {
             0.05 + style_profile(style).press_intensity * 0.03
                 + trait_strength(snap, "TacticalFouler") * 0.95
                 + trait_strength(snap, "RefereeManipulator") * 0.18
+                + high_press_fit * 0.10
                 + if context.in_transition { 0.55 } else { 0.0 }
                 + if context.chasing_game { 0.08 } else { 0.0 }
         }),
@@ -1019,7 +1031,7 @@ pub(crate) fn role_transition_outlet_bias(role: TacticalRole) -> f64 {
     match role {
         TacticalRole::DeepPlaymaker | TacticalRole::AdvancedPlaymaker => 0.16,
         TacticalRole::CenterBackPlaymaker | TacticalRole::SweeperKeeper => 0.12,
-        TacticalRole::WingBackAttack | TacticalRole::WideProgressor => 0.10,
+        TacticalRole::WingBackAttack | TacticalRole::WideProgressor => 0.12,
         TacticalRole::LinkForward | TacticalRole::ChannelRunner => 0.12,
         TacticalRole::TargetForward => 0.10,
         TacticalRole::BoxToBoxMidfielder => 0.06,
@@ -1031,7 +1043,7 @@ pub(crate) fn role_box_support_bias(role: TacticalRole) -> f64 {
     match role {
         TacticalRole::Poacher | TacticalRole::TargetForward | TacticalRole::ChannelRunner => 0.18,
         TacticalRole::LinkForward | TacticalRole::AdvancedPlaymaker => 0.15,
-        TacticalRole::WingBackAttack | TacticalRole::WideProgressor => 0.10,
+        TacticalRole::WingBackAttack | TacticalRole::WideProgressor => 0.12,
         TacticalRole::BoxToBoxMidfielder => 0.08,
         TacticalRole::FullBackSupport => 0.06,
         _ => 0.0,
@@ -1100,10 +1112,10 @@ pub(crate) fn formation_profile(formation: &str) -> FormationProfile {
             rest_defense: 1.0,
         },
         "4-3-3" => FormationProfile {
-            buildup_width: 1.04,
-            midfield_support: 0.97,
-            box_presence: 1.05,
-            rest_defense: 0.98,
+            buildup_width: 1.06,
+            midfield_support: 1.01,
+            box_presence: 1.08,
+            rest_defense: 1.00,
         },
         "3-5-2" => FormationProfile {
             buildup_width: 0.96,
@@ -1136,10 +1148,10 @@ pub(crate) fn formation_profile(formation: &str) -> FormationProfile {
             rest_defense: 0.99,
         },
         "5-3-2" => FormationProfile {
-            buildup_width: 0.94,
-            midfield_support: 0.96,
-            box_presence: 0.99,
-            rest_defense: 1.08,
+            buildup_width: 0.98,
+            midfield_support: 1.01,
+            box_presence: 1.04,
+            rest_defense: 1.07,
         },
         _ => formation_profile("4-4-2"),
     }
