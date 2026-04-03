@@ -513,13 +513,13 @@ pub(crate) fn enrich_intent_context(
         + style.transition_directness * 0.14
         + formation.midfield_support * 0.28
         + formation.buildup_width * 0.10
-        + formation.box_presence * 0.12
+        + formation.box_presence * 0.15
         + if context.in_transition { 0.06 } else { 0.0 })
     .clamp(0.80, 1.26);
 
-    context.box_support = (style.attack_intent * 0.24
-        + formation.box_presence * 0.46
-        + formation.midfield_support * 0.18
+    context.box_support = (style.attack_intent * 0.26
+        + formation.box_presence * 0.48
+        + formation.midfield_support * 0.20
         + formation.buildup_width * 0.12
         + if context.chasing_game { 0.05 } else { 0.0 }
         - if context.protecting_lead { 0.03 } else { 0.0 })
@@ -1030,10 +1030,10 @@ pub(crate) fn role_transition_outlet_bias(role: TacticalRole) -> f64 {
 pub(crate) fn role_box_support_bias(role: TacticalRole) -> f64 {
     match role {
         TacticalRole::Poacher | TacticalRole::TargetForward | TacticalRole::ChannelRunner => 0.18,
-        TacticalRole::LinkForward | TacticalRole::AdvancedPlaymaker => 0.12,
+        TacticalRole::LinkForward | TacticalRole::AdvancedPlaymaker => 0.15,
         TacticalRole::WingBackAttack | TacticalRole::WideProgressor => 0.10,
         TacticalRole::BoxToBoxMidfielder => 0.08,
-        TacticalRole::FullBackSupport => 0.04,
+        TacticalRole::FullBackSupport => 0.06,
         _ => 0.0,
     }
 }
@@ -1047,14 +1047,14 @@ pub(crate) fn transition_entry_chance(
 ) -> f64 {
     let profile = style_profile(style);
     let formation = formation_profile(formation);
-    (0.08
+    (0.10
         + (profile.transition_directness - 1.0) * 0.28
-        + (context.progression_lanes - 1.0) * 0.30
+        + (context.progression_lanes - 1.0) * 0.34
         + (context.safe_outlets - 1.0) * 0.08
-        + (formation.midfield_support - 1.0) * 0.12
-        + role_transition_outlet_bias(outlet_role) * 0.85
+        + (formation.midfield_support - 1.0) * 0.15
+        + role_transition_outlet_bias(outlet_role) * 0.90
         + if context.in_transition { 0.08 } else { 0.0 }
-        - (opposition_rest_defense - 1.0) * 0.30)
+        - (opposition_rest_defense - 1.0) * 0.24)
         .clamp(0.05, 0.52)
 }
 
@@ -1068,17 +1068,17 @@ pub(crate) fn box_entry_chance(
 ) -> f64 {
     let profile = style_profile(style);
     let formation = formation_profile(formation);
-    (0.08
+    (0.13
         + (profile.attack_intent - 1.0) * 0.14
         + (profile.transition_directness - 1.0) * 0.16
-        + (context.progression_lanes - 1.0) * 0.22
-        + (context.box_support - 1.0) * 0.28
-        + (formation.box_presence - 1.0) * 0.20
-        + role_box_support_bias(attacker_role) * 0.75
+        + (context.progression_lanes - 1.0) * 0.26
+        + (context.box_support - 1.0) * 0.33
+        + (formation.box_presence - 1.0) * 0.24
+        + role_box_support_bias(attacker_role) * 0.84
         + if context.in_transition { 0.08 } else { 0.0 }
-        + if press_beaten { 0.08 } else { 0.0 }
-        - (opposition_rest_defense - 1.0) * 0.32)
-        .clamp(0.05, 0.48)
+        + if press_beaten { 0.10 } else { 0.0 }
+        - (opposition_rest_defense - 1.0) * 0.25)
+        .clamp(0.07, 0.56)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1094,9 +1094,9 @@ pub(crate) struct FormationProfile {
 pub(crate) fn formation_profile(formation: &str) -> FormationProfile {
     match formation {
         "4-4-2" => FormationProfile {
-            buildup_width: 1.0,
-            midfield_support: 1.0,
-            box_presence: 1.0,
+            buildup_width: 1.02,
+            midfield_support: 1.03,
+            box_presence: 1.04,
             rest_defense: 1.0,
         },
         "4-3-3" => FormationProfile {
@@ -1112,22 +1112,22 @@ pub(crate) fn formation_profile(formation: &str) -> FormationProfile {
             rest_defense: 0.99,
         },
         "4-5-1" => FormationProfile {
-            buildup_width: 0.98,
-            midfield_support: 1.05,
-            box_presence: 0.94,
-            rest_defense: 1.03,
+            buildup_width: 1.00,
+            midfield_support: 1.08,
+            box_presence: 1.00,
+            rest_defense: 1.02,
         },
         "4-2-3-1" => FormationProfile {
-            buildup_width: 1.0,
-            midfield_support: 1.05,
-            box_presence: 0.97,
-            rest_defense: 1.04,
+            buildup_width: 1.02,
+            midfield_support: 1.09,
+            box_presence: 1.03,
+            rest_defense: 1.03,
         },
         "4-1-4-1" => FormationProfile {
-            buildup_width: 0.98,
-            midfield_support: 1.03,
-            box_presence: 0.93,
-            rest_defense: 1.06,
+            buildup_width: 1.00,
+            midfield_support: 1.06,
+            box_presence: 0.98,
+            rest_defense: 1.05,
         },
         "3-4-3" => FormationProfile {
             buildup_width: 1.08,

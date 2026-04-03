@@ -258,7 +258,42 @@ Expected result:
 
 Observed sample outcome after implementation:
 
-- pending implementation
+- balanced baseline cooled to `2.21` goals per match with `5.50` home shots and `5.05` away shots
+- tactic matrix over-rewarded low-event structures, with `Defensive` leading at `1.433` average PPG
+- fit-profile matrix still showed top counter systems as `player_dependent`, not mechanically overpowered
+
+### Fix 8: Reopen baseline chance creation
+
+The structural gates from Fix 7 were directionally correct, but too restrictive for generic flow and single-striker systems.
+
+Changes:
+
+- eased transition and box-entry penalties against opponent rest defense
+- increased generic progression and box-support context slightly
+- lifted `4-4-2`, `4-2-3-1`, `4-5-1`, and `4-1-4-1` support/box-presence profiles
+- improved box support contribution for `LinkForward`, `AdvancedPlaymaker`, and `FullBackSupport`
+
+Expected result:
+
+- bring balanced baseline back into the roadmap target band
+- improve `4-4-2` and single-striker shape viability without using flat tactical bonuses
+- preserve the player-dependent nature of the strongest counter and attacking systems
+
+Observed sample outcome after implementation:
+
+- balanced benchmark (`500` seeded `4-4-2 Balanced vs Balanced` matches) recovered from `2.21` to `2.95` goals per match
+- shot volume recovered from `5.50 / 5.05` to `7.66 / 6.84` home/away shots
+- tactic matrix (`20` matches per leg) now favors stronger support shapes instead of only low-event defensive suppression:
+  - best style remains `Defensive` at `1.455`, but `Possession`, `Balanced`, and `Counter` sit much closer
+  - best shape is now `4-2-3-1` at `1.504`
+  - `4-5-1` improved from `1.314` to `1.418`
+  - `4-1-4-1` improved from `1.323` to `1.383`
+  - `4-4-2` improved from `1.284` to `1.349`
+- fit-profile matrix still shows no mechanically overpowered watchlist entries
+- top systems remain player-dependent:
+  - `4-4-2 Counter`: `1.223 -> 1.572 -> 2.099`
+  - `3-5-2 Counter`: `1.286 -> 1.579 -> 2.097`
+  - `3-4-3 Counter`: `1.189 -> 1.606 -> 1.965`
 
 ## Benchmark workflow
 
