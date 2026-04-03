@@ -486,6 +486,60 @@ pub(crate) struct IntentContext {
     pub late_game: bool,
     pub protecting_lead: bool,
     pub chasing_game: bool,
+    pub safe_outlets: f64,
+    pub progression_lanes: f64,
+    pub box_support: f64,
+    pub rest_defense: f64,
+    pub width_access: f64,
+}
+
+pub(crate) fn enrich_intent_context(
+    mut context: IntentContext,
+    style: PlayStyle,
+    formation: &str,
+) -> IntentContext {
+    let style = style_profile(style);
+    let formation = formation_profile(formation);
+
+    context.safe_outlets = (style.buildup_retain * 0.45
+        + formation.midfield_support * 0.30
+        + formation.buildup_width * 0.15
+        + formation.rest_defense * 0.10
+        + if context.protecting_lead { 0.06 } else { 0.0 }
+        - if context.chasing_game { 0.03 } else { 0.0 })
+    .clamp(0.82, 1.24);
+
+    context.progression_lanes = (style.midfield_control * 0.36
+        + style.transition_directness * 0.14
+        + formation.midfield_support * 0.28
+        + formation.buildup_width * 0.10
+        + formation.box_presence * 0.12
+        + if context.in_transition { 0.06 } else { 0.0 })
+    .clamp(0.80, 1.26);
+
+    context.box_support = (style.attack_intent * 0.24
+        + formation.box_presence * 0.46
+        + formation.midfield_support * 0.18
+        + formation.buildup_width * 0.12
+        + if context.chasing_game { 0.05 } else { 0.0 }
+        - if context.protecting_lead { 0.03 } else { 0.0 })
+    .clamp(0.78, 1.28);
+
+    context.rest_defense = (style.defensive_solidity * 0.35
+        + style.buildup_retain * 0.10
+        + formation.rest_defense * 0.42
+        + formation.midfield_support * 0.13
+        + if context.protecting_lead { 0.06 } else { 0.0 })
+    .clamp(0.82, 1.28);
+
+    context.width_access = (formation.buildup_width * 0.56
+        + style.attack_intent * 0.12
+        + style.transition_directness * 0.14
+        + formation.box_presence * 0.10
+        + formation.midfield_support * 0.08)
+        .clamp(0.78, 1.28);
+
+    context
 }
 
 /// Compute a multiplicative trait bonus for a specific action context.
@@ -554,20 +608,19 @@ pub(crate) fn trait_bonus(snap: &PlayerSnap, context: TraitContext) -> f64 {
 
 pub(crate) fn choose_buildup_intent<R: Rng>(
     snap: &PlayerSnap,
-    style: PlayStyle,
+    _style: PlayStyle,
     context: IntentContext,
     rng: &mut R,
 ) -> ActionIntent {
-    let profile = style_profile(style);
     let weights = vec![
         (ActionIntent::SafeRecyclePass, {
-            1.0 + profile.buildup_retain * 0.35
+            0.72 + context.safe_outlets * 0.60
                 + trait_strength(snap, "TempoManipulator") * 0.25
                 + trait_strength(snap, "RiskCalibrator") * 0.15
                 + if context.protecting_lead { 0.45 } else { 0.0 }
         }),
         (ActionIntent::SplitLinePass, {
-            0.55 + profile.midfield_control * 0.20
+            0.30 + context.progression_lanes * 0.62
                 + trait_strength(snap, "Playmaker") * 0.55
                 + trait_strength(snap, "Visionary") * 0.45
                 + trait_strength(snap, "EarlyScanner") * 0.35
@@ -580,10 +633,11 @@ pub(crate) fn choose_buildup_intent<R: Rng>(
                 } else {
                     0.0
                 }
-                + if context.in_transition { 0.18 } else { 0.0 }
+                + if context.in_transition { 0.22 } else { 0.0 }
         }),
         (ActionIntent::BaitPressTouch, {
-            0.20 + profile.buildup_retain * 0.10
+            0.10 + context.safe_outlets * 0.18
+                + context.progression_lanes * 0.08
                 + trait_strength(snap, "PressBaiter") * 0.95
                 + trait_strength(snap, "ShieldAddict") * 0.25
                 + trait_strength(snap, "RecoveryTouch") * 0.18
@@ -604,41 +658,45 @@ pub(crate) fn choose_buildup_intent<R: Rng>(
 
 pub(crate) fn choose_midfield_intent<R: Rng>(
     snap: &PlayerSnap,
-    style: PlayStyle,
+    _style: PlayStyle,
     context: IntentContext,
     rng: &mut R,
 ) -> ActionIntent {
-    let profile = style_profile(style);
     let weights = vec![
         (ActionIntent::OneTouchCombination, {
-            0.55 + profile.midfield_control * 0.15
+            0.24 + context.safe_outlets * 0.20
+                + context.progression_lanes * 0.24
                 + trait_strength(snap, "OneTouchSpecialist") * 0.90
                 + trait_strength(snap, "TeamPlayer") * 0.25
                 + if context.under_pressure { 0.20 } else { 0.0 }
         }),
         (ActionIntent::DelayedRelease, {
-            0.45 + profile.buildup_retain * 0.10
+            0.18 + context.safe_outlets * 0.28
+                + context.progression_lanes * 0.14
                 + trait_strength(snap, "DelayedPasser") * 0.95
                 + trait_strength(snap, "TempoManipulator") * 0.45
                 + trait_strength(snap, "RiskCalibrator") * 0.35
                 + if context.protecting_lead { 0.18 } else { 0.0 }
         }),
         (ActionIntent::ProgressiveCarry, {
-            0.55 + profile.attack_intent * 0.10
+            0.24 + context.progression_lanes * 0.18
+                + context.width_access * 0.22
                 + trait_strength(snap, "Dribbler") * 0.35
                 + trait_strength(snap, "ChannelDrifter") * 0.45
                 + trait_strength(snap, "ChaosCreator") * 0.28
                 + if context.chasing_game { 0.18 } else { 0.0 }
         }),
         (ActionIntent::ThirdManLayoff, {
-            0.35 + profile.midfield_control * 0.15
+            0.16 + context.progression_lanes * 0.28
+                + context.box_support * 0.18
                 + trait_strength(snap, "SpaceMagnet") * 0.30
                 + trait_strength(snap, "DecoyMover") * 0.45
                 + trait_strength(snap, "Playmaker") * 0.20
-                + if context.in_transition { 0.12 } else { 0.0 }
+                + if context.in_transition { 0.14 } else { 0.0 }
         }),
         (ActionIntent::PressEscapeTurn, {
-            0.25 + profile.transition_directness * 0.08
+            0.12 + context.progression_lanes * 0.12
+                + context.width_access * 0.12
                 + trait_strength(snap, "PressBaiter") * 0.35
                 + trait_strength(snap, "DisguisedFirstTouch") * 0.45
                 + trait_strength(snap, "RecoveryTouch") * 0.30
@@ -658,14 +716,14 @@ pub(crate) fn choose_midfield_intent<R: Rng>(
 
 pub(crate) fn choose_attacking_intent<R: Rng>(
     snap: &PlayerSnap,
-    style: PlayStyle,
+    _style: PlayStyle,
     context: IntentContext,
     rng: &mut R,
 ) -> ActionIntent {
-    let profile = style_profile(style);
     let weights = vec![
         (ActionIntent::LinkPlaySlip, {
-            0.50 + profile.attack_intent * 0.10
+            0.18 + context.progression_lanes * 0.22
+                + context.box_support * 0.18
                 + trait_strength(snap, "Playmaker") * 0.28
                 + trait_strength(snap, "DelayedPasser") * 0.28
                 + if matches!(
@@ -678,26 +736,29 @@ pub(crate) fn choose_attacking_intent<R: Rng>(
                 }
         }),
         (ActionIntent::DirectDribble, {
-            0.55 + profile.attack_intent * 0.08
+            0.18 + context.width_access * 0.30
+                + context.progression_lanes * 0.10
                 + trait_strength(snap, "Dribbler") * 0.45
                 + trait_strength(snap, "ChaosCreator") * 0.25
                 + trait_strength(snap, "NutmegOpportunist") * 0.20
                 + if context.chasing_game { 0.15 } else { 0.0 }
         }),
         (ActionIntent::BlindSideRun, {
-            0.30 + profile.transition_directness * 0.10
+            0.10 + context.progression_lanes * 0.18
+                + context.box_support * 0.22
                 + trait_strength(snap, "BlindSideRunner") * 0.95
                 + trait_strength(snap, "TransitionAnticipator") * 0.25
                 + if context.in_transition { 0.35 } else { 0.0 }
         }),
         (ActionIntent::LateBoxDelivery, {
-            0.28 + profile.attack_intent * 0.08
+            0.10 + context.box_support * 0.30
+                + context.width_access * 0.10
                 + trait_strength(snap, "LateBoxArriver") * 0.60
                 + trait_strength(snap, "FarPostGhost") * 0.25
                 + trait_strength(snap, "DecoyMover") * 0.25
         }),
         (ActionIntent::NearPostAttack, {
-            0.22 + profile.attack_intent * 0.10
+            0.08 + context.box_support * 0.34
                 + trait_strength(snap, "NearPostHunter") * 0.90
                 + trait_strength(snap, "ChannelDrifter") * 0.20
                 + if context.in_transition { 0.12 } else { 0.0 }
@@ -720,28 +781,31 @@ pub(crate) fn choose_defensive_intent<R: Rng>(
     context: IntentContext,
     rng: &mut R,
 ) -> ActionIntent {
-    let profile = style_profile(style);
     let weights = vec![
         (ActionIntent::StepInInterception, {
-            0.55 + profile.press_intensity * 0.12
+            0.18 + style_profile(style).press_intensity * 0.08
+                + context.rest_defense * 0.18
                 + trait_strength(snap, "PassingLaneThief") * 0.95
                 + trait_strength(snap, "EarlyScanner") * 0.18
+                + if context.chasing_game { 0.12 } else { 0.0 }
         }),
         (ActionIntent::ContainAndShowWide, {
-            0.45 + profile.defensive_solidity * 0.12
+            0.18 + context.rest_defense * 0.34
+                + context.width_access * 0.08
                 + trait_strength(snap, "ContainmentSpecialist") * 0.95
                 + trait_strength(snap, "BodyAngleManipulator") * 0.45
                 + if context.protecting_lead { 0.20 } else { 0.0 }
         }),
         (ActionIntent::TacticalFoulStop, {
-            0.12 + profile.press_intensity * 0.04
+            0.05 + style_profile(style).press_intensity * 0.03
                 + trait_strength(snap, "TacticalFouler") * 0.95
                 + trait_strength(snap, "RefereeManipulator") * 0.18
                 + if context.in_transition { 0.55 } else { 0.0 }
                 + if context.chasing_game { 0.08 } else { 0.0 }
         }),
         (ActionIntent::AerialClearance, {
-            0.22 + profile.defensive_solidity * 0.08
+            0.10 + context.rest_defense * 0.16
+                + context.box_support * 0.06
                 + trait_strength(snap, "AerialGrappler") * 0.55
                 + trait_strength(snap, "SecondContactWinner") * 0.25
         }),
@@ -759,23 +823,25 @@ pub(crate) fn choose_defensive_intent<R: Rng>(
 
 pub(crate) fn choose_goalkeeper_distribution_intent<R: Rng>(
     snap: &PlayerSnap,
-    style: PlayStyle,
+    _style: PlayStyle,
     context: IntentContext,
     rng: &mut R,
 ) -> ActionIntent {
-    let profile = style_profile(style);
     let weights = vec![
         (ActionIntent::SecureClaim, {
-            1.0 + profile.buildup_retain * 0.25
+            0.78 + context.safe_outlets * 0.34
+                + context.rest_defense * 0.16
                 + trait_strength(snap, "SafeHands") * 0.20
                 + if context.protecting_lead { 0.18 } else { 0.0 }
         }),
         (ActionIntent::LaunchThrow, {
-            0.35 + profile.transition_directness * 0.22
-                + trait_strength(snap, "ThrowLauncher") * 1.10
+            0.06 + context.progression_lanes * 0.14
+                + context.width_access * 0.12
+                + trait_strength(snap, "ThrowLauncher") * 0.72
                 + trait_strength(snap, "TransitionAnticipator") * 0.18
-                + if context.in_transition { 0.30 } else { 0.0 }
-                + if context.chasing_game { 0.12 } else { 0.0 }
+                + if context.in_transition { 0.18 } else { 0.0 }
+                + if context.chasing_game { 0.08 } else { 0.0 }
+                - if context.protecting_lead { 0.05 } else { 0.0 }
         }),
     ];
 
@@ -828,13 +894,13 @@ pub(crate) fn style_profile(style: PlayStyle) -> StyleProfile {
             fatigue_burden: 1.0,
         },
         PlayStyle::Attacking => StyleProfile {
-            tempo: 1.08,
+            tempo: 1.04,
             buildup_retain: 0.98,
             midfield_control: 0.99,
-            attack_intent: 1.08,
+            attack_intent: 1.03,
             defensive_solidity: 0.94,
             press_intensity: 1.03,
-            transition_directness: 1.02,
+            transition_directness: 1.00,
             fatigue_burden: 1.05,
         },
         PlayStyle::Defensive => StyleProfile {
@@ -868,13 +934,13 @@ pub(crate) fn style_profile(style: PlayStyle) -> StyleProfile {
             fatigue_burden: 0.96,
         },
         PlayStyle::HighPress => StyleProfile {
-            tempo: 1.03,
+            tempo: 1.00,
             buildup_retain: 0.97,
             midfield_control: 1.00,
-            attack_intent: 0.99,
+            attack_intent: 0.95,
             defensive_solidity: 0.92,
-            press_intensity: 1.10,
-            transition_directness: 1.04,
+            press_intensity: 1.08,
+            transition_directness: 1.00,
             fatigue_burden: 1.22,
         },
     }
@@ -949,9 +1015,70 @@ pub(crate) fn fatigue_modifier(style: PlayStyle) -> f64 {
     style_profile(style).fatigue_burden
 }
 
-pub(crate) fn transition_progress_chance(style: PlayStyle) -> f64 {
-    let directness = style_profile(style).transition_directness;
-    ((directness - 1.0) * 1.15 + 0.10).clamp(0.05, 0.40)
+pub(crate) fn role_transition_outlet_bias(role: TacticalRole) -> f64 {
+    match role {
+        TacticalRole::DeepPlaymaker | TacticalRole::AdvancedPlaymaker => 0.16,
+        TacticalRole::CenterBackPlaymaker | TacticalRole::SweeperKeeper => 0.12,
+        TacticalRole::WingBackAttack | TacticalRole::WideProgressor => 0.10,
+        TacticalRole::LinkForward | TacticalRole::ChannelRunner => 0.12,
+        TacticalRole::TargetForward => 0.10,
+        TacticalRole::BoxToBoxMidfielder => 0.06,
+        _ => 0.0,
+    }
+}
+
+pub(crate) fn role_box_support_bias(role: TacticalRole) -> f64 {
+    match role {
+        TacticalRole::Poacher | TacticalRole::TargetForward | TacticalRole::ChannelRunner => 0.18,
+        TacticalRole::LinkForward | TacticalRole::AdvancedPlaymaker => 0.12,
+        TacticalRole::WingBackAttack | TacticalRole::WideProgressor => 0.10,
+        TacticalRole::BoxToBoxMidfielder => 0.08,
+        TacticalRole::FullBackSupport => 0.04,
+        _ => 0.0,
+    }
+}
+
+pub(crate) fn transition_entry_chance(
+    style: PlayStyle,
+    formation: &str,
+    outlet_role: TacticalRole,
+    context: IntentContext,
+    opposition_rest_defense: f64,
+) -> f64 {
+    let profile = style_profile(style);
+    let formation = formation_profile(formation);
+    (0.08
+        + (profile.transition_directness - 1.0) * 0.28
+        + (context.progression_lanes - 1.0) * 0.30
+        + (context.safe_outlets - 1.0) * 0.08
+        + (formation.midfield_support - 1.0) * 0.12
+        + role_transition_outlet_bias(outlet_role) * 0.85
+        + if context.in_transition { 0.08 } else { 0.0 }
+        - (opposition_rest_defense - 1.0) * 0.30)
+        .clamp(0.05, 0.52)
+}
+
+pub(crate) fn box_entry_chance(
+    style: PlayStyle,
+    formation: &str,
+    attacker_role: TacticalRole,
+    context: IntentContext,
+    opposition_rest_defense: f64,
+    press_beaten: bool,
+) -> f64 {
+    let profile = style_profile(style);
+    let formation = formation_profile(formation);
+    (0.08
+        + (profile.attack_intent - 1.0) * 0.14
+        + (profile.transition_directness - 1.0) * 0.16
+        + (context.progression_lanes - 1.0) * 0.22
+        + (context.box_support - 1.0) * 0.28
+        + (formation.box_presence - 1.0) * 0.20
+        + role_box_support_bias(attacker_role) * 0.75
+        + if context.in_transition { 0.08 } else { 0.0 }
+        + if press_beaten { 0.08 } else { 0.0 }
+        - (opposition_rest_defense - 1.0) * 0.32)
+        .clamp(0.05, 0.48)
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -218,6 +218,46 @@ Expected result:
 
 Observed sample outcome after implementation:
 
+- balanced benchmark (`500` seeded `4-4-2 Balanced vs Balanced` matches) cooled to `2.21` goals per match with `5.50` home shots and `5.05` away shots
+- defender circulation stayed healthy at `19.79` pass attempts per match, midfielders led volume at `38.44`, and forwards dropped to `7.31`
+- tactic matrix (`20` matches per leg) shifted toward low-event structures:
+  - best style: `Defensive` at `1.433` average PPG
+  - weakest style: `HighPress` at `1.230`
+  - best shape: `3-4-3` at `1.427`
+  - weakest shape: `4-3-3` at `1.246`
+- fit-profile matrix (`12` matches per leg) still shows the top attacking and counter systems as `player_dependent`, not mechanically overpowered:
+  - `3-5-2 Counter`: `1.344 -> 1.625 -> 2.019`
+  - `3-4-3 Counter`: `1.311 -> 1.634 -> 1.972`
+  - `4-4-2 Counter`: `1.194 -> 1.525 -> 1.948`
+- conclusion:
+  - the new support-shape and transition gates make strength come from structure and player fit
+  - generic flow is now too cold, so the next pass should reopen baseline shot creation without falling back to flat tactical bonuses
+
+### Fix 7: Non-flat tuning framework
+
+The next tuning pass should move more of the engine away from direct style modifiers and into structural context.
+
+Detailed design note:
+
+- [engine-tuning-framework.md](/home/quackson/Desktop/Coding/openfootmanager/docs/benchmarks/engine-tuning-framework.md)
+
+Changes:
+
+- add support-shape fields to `IntentContext`
+- derive those support numbers from `style + formation`
+- use those support numbers in intent weighting
+- gate transition progression by outlet role and opponent rest defense
+- gate box-entry jumps by support shape and whether an aggressive defense was beaten
+- route goalkeeper fast distribution through the same transition logic
+
+Expected result:
+
+- systems should create different chains because they create different structural contexts
+- strong systems should depend more on outlet quality, support shape, and transition protection
+- benchmarks should become more informative about why a system is strong, not just whether it wins
+
+Observed sample outcome after implementation:
+
 - pending implementation
 
 ## Benchmark workflow
@@ -232,6 +272,57 @@ For each fix:
    - `bash scripts/render-tactic-matrix-benchmark.sh --matches-per-leg 20 --output-dir /tmp/ofm-tactic-bench --allow-dirty`
 5. inspect the deltas
 6. commit only when the change behaves as intended
+
+## Benchmark roadmap extension
+
+The engine now needs a second benchmark family beyond the generic tactic matrix.
+
+### Role/trait blueprint matrix
+
+Purpose:
+
+- test `formation + play style + formation slot roles + player trait packages` together
+- surface exploit candidates that only appear when specific role/trait mixes are present
+- identify which blueprints counter those pressure points
+- expose role-level fingerprints so engine tuning can target the real source of the exploit
+
+Artifacts:
+
+- `engine-role-trait-matrix.json`
+- `engine-role-trait-rankings.md`
+- `engine-role-trait-exploits.md`
+- `engine-role-trait-matchups.md`
+
+Workflow:
+
+1. run `bash scripts/render-role-trait-matrix-benchmark.sh --matches-per-leg 25 --allow-dirty`
+2. inspect top blueprints in the exploit watchlist
+3. inspect the role fingerprints driving those blueprints
+4. compare their listed counters
+5. tune the engine where the role fingerprint explains the exploit, not just the final style label
+
+### Fit-profile matrix
+
+Purpose:
+
+- test whether a system is strong because it has the right players or because the engine is over-rewarding it regardless of fit
+- compare `BadFit`, `NeutralFit`, and `IdealFit` versions of the same system
+- measure counter-response against those fit levels
+- separate genuinely player-dependent systems from mechanically overpowered ones
+
+Artifacts:
+
+- `engine-fit-profile-matrix.json`
+- `engine-fit-profile-rankings.md`
+- `engine-fit-profile-analysis.md`
+
+Workflow:
+
+1. run `bash scripts/render-fit-profile-matrix-benchmark.sh --matches-per-leg 12 --allow-dirty`
+2. inspect the fit curve for each system: `BadFit -> NeutralFit -> IdealFit`
+3. treat high-PPG systems with small fit gaps as exploit candidates
+4. treat high-PPG systems with large fit gaps as healthier player-dependent systems
+5. inspect the ideal-fit counter tables before changing style or formation logic
 
 ## Success criteria
 

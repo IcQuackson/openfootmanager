@@ -61,8 +61,91 @@ Run a larger lower-variance sample:
 bash scripts/render-tactic-matrix-benchmark.sh --matches-per-leg 50 --allow-dirty
 ```
 
+## Role, Formation, and Trait Matrix Benchmark
+
+`benchmark:engine:role-traits` runs a deeper blueprint-vs-blueprint matrix. Each blueprint combines:
+
+- formation
+- team play style
+- formation slot roles
+- a style-aligned player trait package
+
+Artifacts written under `docs/benchmarks`:
+
+- `engine-role-trait-matrix.json`
+- `engine-role-trait-rankings.md`
+- `engine-role-trait-exploits.md`
+- `engine-role-trait-matchups.md`
+
+Default scenario:
+
+- `60` matches per leg
+- home/away balancing for every unordered blueprint pair
+- `8` formations
+- `6` play styles
+- synthetic role-specific squads with trait packages to pressure-test engine behavior
+
+Run it:
+
+```bash
+npm run benchmark:engine:role-traits
+```
+
+Run a smaller local sample:
+
+```bash
+bash scripts/render-role-trait-matrix-benchmark.sh --matches-per-leg 10 --allow-dirty
+```
+
+Run a larger lower-variance sample:
+
+```bash
+bash scripts/render-role-trait-matrix-benchmark.sh --matches-per-leg 25 --allow-dirty
+```
+
+## Fit Profile Matrix Benchmark
+
+`benchmark:engine:fit-profiles` measures how much each system depends on having the right squad.
+
+Each system is tested with three squad profiles:
+
+- `BadFit`
+- `NeutralFit`
+- `IdealFit`
+
+Artifacts written under `docs/benchmarks`:
+
+- `engine-fit-profile-matrix.json`
+- `engine-fit-profile-rankings.md`
+- `engine-fit-profile-analysis.md`
+
+What it answers:
+
+- which systems only become strong with tailored players
+- which systems stay too strong even with the wrong players
+- how ideal-fit systems perform against bad-fit, neutral-fit, and ideal-fit versions of their opponents
+
+Run it:
+
+```bash
+npm run benchmark:engine:fit-profiles
+```
+
+Run a smaller local sample:
+
+```bash
+bash scripts/render-fit-profile-matrix-benchmark.sh --matches-per-leg 4 --allow-dirty
+```
+
+Run a larger lower-variance sample:
+
+```bash
+bash scripts/render-fit-profile-matrix-benchmark.sh --matches-per-leg 12 --allow-dirty
+```
+
 Roadmap:
 
 - [engine-balance-roadmap.md](/home/quackson/Desktop/Coding/openfootmanager/docs/benchmarks/engine-balance-roadmap.md)
+- [engine-tuning-framework.md](/home/quackson/Desktop/Coding/openfootmanager/docs/benchmarks/engine-tuning-framework.md)
 - [engine-traits-players.md](/home/quackson/Desktop/Coding/openfootmanager/docs/benchmarks/engine-traits-players.md)
 - [engine-trait-action-phases.md](/home/quackson/Desktop/Coding/openfootmanager/docs/benchmarks/engine-trait-action-phases.md)

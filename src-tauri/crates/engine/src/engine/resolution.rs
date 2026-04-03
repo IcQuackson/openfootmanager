@@ -2,14 +2,15 @@ use rand::Rng;
 
 use crate::event::{EventType, MatchEvent};
 use crate::shared::{
-    ActionIntent, IntentContext, TraitContext, attack_modifier, buildup_modifier,
+    ActionIntent, IntentContext, TraitContext, attack_modifier, box_entry_chance, buildup_modifier,
     choose_attacking_intent, choose_buildup_intent, choose_defensive_intent,
     choose_goalkeeper_distribution_intent, choose_midfield_intent, defense_modifier,
-    formation_attack_modifier, formation_buildup_modifier, formation_midfield_modifier,
-    formation_rest_defense_modifier, home_mod, midfield_attack_modifier, midfield_defense_modifier,
-    press_modifier, role_carry_bias, role_clearance_bias, role_pass_bias, role_press_bias,
-    role_shot_bias, trait_bonus, trait_carry_bias, trait_clearance_bias, trait_pass_bias,
-    trait_press_bias, trait_shot_bias, trait_strength, transition_progress_chance,
+    enrich_intent_context, formation_attack_modifier, formation_buildup_modifier,
+    formation_midfield_modifier, formation_rest_defense_modifier, home_mod,
+    midfield_attack_modifier, midfield_defense_modifier, press_modifier, role_carry_bias,
+    role_clearance_bias, role_pass_bias, role_press_bias, role_shot_bias, trait_bonus,
+    trait_carry_bias, trait_clearance_bias, trait_pass_bias, trait_press_bias, trait_shot_bias,
+    trait_strength, transition_entry_chance,
 };
 use crate::types::{Position, Side, Zone};
 
@@ -57,24 +58,37 @@ fn resolve_buildup<R: Rng>(
         )
         * formation_buildup_modifier(&ctx.team(att_side).formation);
     let ball_zone = ctx.ball_zone;
-    let intent_context =
+    let buildup_context =
         intent_context(ctx, minute, att_side, press > (pass_skill * 0.95).max(52.0));
-    let intent = choose_buildup_intent(&passer, ctx.team(att_side).play_style, intent_context, rng);
+    let intent =
+        choose_buildup_intent(&passer, ctx.team(att_side).play_style, buildup_context, rng);
+    let opponent_rest_defense = formation_rest_defense_modifier(&ctx.team(def_side).formation)
+        * defense_modifier(ctx.team(def_side).play_style);
+    let progression_jump = transition_entry_chance(
+        ctx.team(att_side).play_style,
+        &ctx.team(att_side).formation,
+        passer.role,
+        buildup_context,
+        opponent_rest_defense,
+    );
 
     let (intent_modifier, success_zone, keeps_transition) = match intent {
         ActionIntent::SafeRecyclePass => (1.08, Zone::Midfield, false),
         ActionIntent::SplitLinePass => (
             0.95,
-            if intent_context.in_transition || rng.gen_range(0.0..1.0f64) < 0.28 {
+            if buildup_context.in_transition || rng.gen_range(0.0..1.0f64) < progression_jump {
                 Zone::attacking_third(att_side)
             } else {
                 Zone::Midfield
             },
-            intent_context.in_transition,
+            buildup_context.in_transition,
         ),
         ActionIntent::BaitPressTouch => (
             0.90,
-            if intent_context.under_pressure || intent_context.in_transition {
+            if buildup_context.under_pressure
+                || buildup_context.in_transition
+                || rng.gen_range(0.0..1.0f64) < progression_jump * 0.8
+            {
                 Zone::attacking_third(att_side)
             } else {
                 Zone::Midfield
@@ -125,9 +139,16 @@ fn resolve_buildup<R: Rng>(
         }
         ctx.possession = def_side;
         ctx.transition_side = Some(def_side);
-        ctx.ball_zone = if rng.gen_range(0.0..1.0f64)
-            < transition_progress_chance(ctx.team(def_side).play_style)
-        {
+        let recovery_context = intent_context(ctx, minute, def_side, false);
+        let breakout = transition_entry_chance(
+            ctx.team(def_side).play_style,
+            &ctx.team(def_side).formation,
+            presser.role,
+            recovery_context,
+            formation_rest_defense_modifier(&ctx.team(att_side).formation)
+                * defense_modifier(ctx.team(att_side).play_style),
+        );
+        ctx.ball_zone = if rng.gen_range(0.0..1.0f64) < breakout {
             Zone::Midfield.advance_towards(def_side)
         } else {
             Zone::Midfield
@@ -208,10 +229,21 @@ fn resolve_midfield<R: Rng>(
         );
 
         let next_zone = match attacker_intent {
-            ActionIntent::ThirdManLayoff if base_context.in_transition => {
-                Zone::attacking_box(att_side)
-            }
-            ActionIntent::PressEscapeTurn if rng.gen_range(0.0..1.0f64) < 0.22 => {
+            ActionIntent::ThirdManLayoff | ActionIntent::PressEscapeTurn
+                if rng.gen_range(0.0..1.0f64)
+                    < box_entry_chance(
+                        ctx.team(att_side).play_style,
+                        &ctx.team(att_side).formation,
+                        attacker.role,
+                        base_context,
+                        formation_rest_defense_modifier(&ctx.team(def_side).formation)
+                            * defense_modifier(ctx.team(def_side).play_style),
+                        matches!(
+                            defender_intent,
+                            ActionIntent::StepInInterception | ActionIntent::TacticalFoulStop
+                        ),
+                    ) =>
+            {
                 Zone::attacking_box(att_side)
             }
             _ => Zone::attacking_third(att_side),
@@ -314,7 +346,23 @@ fn resolve_attacking_third<R: Rng>(
             _ => EventType::Dribble,
         };
         ctx.emit(MatchEvent::new(minute, success_event, att_side, zone).with_player(&attacker.id));
-        ctx.ball_zone = Zone::attacking_box(att_side);
+        ctx.ball_zone = if rng.gen_range(0.0..1.0f64)
+            < box_entry_chance(
+                ctx.team(att_side).play_style,
+                &ctx.team(att_side).formation,
+                attacker.role,
+                base_context,
+                formation_rest_defense_modifier(&ctx.team(def_side).formation)
+                    * defense_modifier(ctx.team(def_side).play_style),
+                matches!(
+                    defender_intent,
+                    ActionIntent::StepInInterception | ActionIntent::TacticalFoulStop
+                ),
+            ) {
+            Zone::attacking_box(att_side)
+        } else {
+            zone
+        };
         if matches!(
             attacker_intent,
             ActionIntent::BlindSideRun
@@ -476,12 +524,20 @@ fn handle_midfield_defensive_win<R: Rng>(
 
     ctx.possession = def_side;
     ctx.transition_side = Some(def_side);
-    ctx.ball_zone =
-        if rng.gen_range(0.0..1.0f64) < transition_progress_chance(ctx.team(def_side).play_style) {
-            Zone::attacking_third(def_side)
-        } else {
-            Zone::Midfield
-        };
+    let recovery_context = intent_context(ctx, minute, def_side, false);
+    let breakout = transition_entry_chance(
+        ctx.team(def_side).play_style,
+        &ctx.team(def_side).formation,
+        defender.role,
+        recovery_context,
+        formation_rest_defense_modifier(&ctx.team(att_side).formation)
+            * defense_modifier(ctx.team(att_side).play_style),
+    );
+    ctx.ball_zone = if rng.gen_range(0.0..1.0f64) < breakout {
+        Zone::attacking_third(def_side)
+    } else {
+        Zone::Midfield
+    };
 }
 
 fn handle_attacking_third_defensive_win<R: Rng>(
@@ -542,9 +598,9 @@ fn handle_attacking_third_defensive_win<R: Rng>(
 
     if rng.gen_range(0.0..1.0f64)
         < if attacker_intent == ActionIntent::LateBoxDelivery {
-            0.32
+            0.22 + base_corner_pressure(ctx, att_side)
         } else {
-            0.24
+            0.16 + base_corner_pressure(ctx, att_side)
         }
     {
         ctx.emit(MatchEvent::new(minute, EventType::Corner, att_side, zone));
@@ -556,7 +612,20 @@ fn handle_attacking_third_defensive_win<R: Rng>(
 
     ctx.possession = def_side;
     ctx.transition_side = Some(def_side);
-    ctx.ball_zone = Zone::defensive_third(def_side);
+    let recovery_context = intent_context(ctx, minute, def_side, false);
+    let breakout = transition_entry_chance(
+        ctx.team(def_side).play_style,
+        &ctx.team(def_side).formation,
+        defender.role,
+        recovery_context,
+        formation_rest_defense_modifier(&ctx.team(att_side).formation)
+            * defense_modifier(ctx.team(att_side).play_style),
+    );
+    ctx.ball_zone = if rng.gen_range(0.0..1.0f64) < breakout * 0.85 {
+        Zone::Midfield
+    } else {
+        Zone::defensive_third(def_side)
+    };
 }
 
 fn maybe_rebound_follow_up<R: Rng>(
@@ -567,12 +636,12 @@ fn maybe_rebound_follow_up<R: Rng>(
     rng: &mut R,
 ) -> bool {
     let rebounder = snap_player(ctx, att_side, Position::Forward, rng);
-    let rebound_window = 0.08
-        + trait_strength(&rebounder, "ReboundInstinct") * 0.28
-        + trait_strength(&rebounder, "SecondBallPredator") * 0.18
-        + trait_strength(&rebounder, "LateBoxArriver") * 0.12
-        + trait_strength(&rebounder, "FarPostGhost") * 0.08;
-    if rng.gen_range(0.0..1.0f64) >= rebound_window.clamp(0.05, 0.42) {
+    let rebound_window = 0.03
+        + trait_strength(&rebounder, "ReboundInstinct") * 0.16
+        + trait_strength(&rebounder, "SecondBallPredator") * 0.10
+        + trait_strength(&rebounder, "LateBoxArriver") * 0.06
+        + trait_strength(&rebounder, "FarPostGhost") * 0.04;
+    if rng.gen_range(0.0..1.0f64) >= rebound_window.clamp(0.03, 0.24) {
         return false;
     }
 
@@ -591,7 +660,7 @@ fn maybe_rebound_follow_up<R: Rng>(
             * trait_bonus(&goalkeeper, TraitContext::Goalkeeping);
     let zone = Zone::attacking_box(att_side);
 
-    if rng.gen_range(0.0..1.0f64) < (0.22 + (finish_rating - gk_rating) / 220.0).clamp(0.08, 0.55) {
+    if rng.gen_range(0.0..1.0f64) < (0.14 + (finish_rating - gk_rating) / 260.0).clamp(0.05, 0.38) {
         ctx.emit(
             MatchEvent::new(minute, EventType::Goal, att_side, zone).with_player(&rebounder.id),
         );
@@ -601,7 +670,7 @@ fn maybe_rebound_follow_up<R: Rng>(
         return true;
     }
 
-    if rng.gen_range(0.0..1.0f64) < 0.58 {
+    if rng.gen_range(0.0..1.0f64) < 0.50 {
         ctx.emit(
             MatchEvent::new(minute, EventType::ShotSaved, att_side, zone)
                 .with_player(&rebounder.id),
@@ -631,13 +700,18 @@ fn settle_after_goalkeeper_control<R: Rng>(
     let distribution_intent = choose_goalkeeper_distribution_intent(
         goalkeeper,
         ctx.team(possession_side).play_style,
-        IntentContext {
-            in_transition: true,
-            chasing_game: distribution_context.chasing_game,
-            protecting_lead: distribution_context.protecting_lead,
-            late_game: distribution_context.late_game,
-            under_pressure: false,
-        },
+        enrich_intent_context(
+            IntentContext {
+                in_transition: true,
+                chasing_game: distribution_context.chasing_game,
+                protecting_lead: distribution_context.protecting_lead,
+                late_game: distribution_context.late_game,
+                under_pressure: false,
+                ..IntentContext::default()
+            },
+            ctx.team(possession_side).play_style,
+            &ctx.team(possession_side).formation,
+        ),
         rng,
     );
 
@@ -655,8 +729,22 @@ fn settle_after_goalkeeper_control<R: Rng>(
             );
             ctx.transition_side = Some(possession_side);
             ctx.ball_zone = if rng.gen_range(0.0..1.0f64)
-                < transition_progress_chance(ctx.team(possession_side).play_style) + 0.12
-            {
+                < transition_entry_chance(
+                    ctx.team(possession_side).play_style,
+                    &ctx.team(possession_side).formation,
+                    goalkeeper.role,
+                    enrich_intent_context(
+                        IntentContext {
+                            in_transition: true,
+                            ..distribution_context
+                        },
+                        ctx.team(possession_side).play_style,
+                        &ctx.team(possession_side).formation,
+                    ),
+                    formation_rest_defense_modifier(
+                        &ctx.team(possession_side.opposite()).formation,
+                    ) * defense_modifier(ctx.team(possession_side.opposite()).play_style),
+                ) {
                 Zone::attacking_third(possession_side)
             } else {
                 Zone::Midfield
@@ -702,13 +790,24 @@ fn intent_context(
         Side::Away => ctx.away_score,
     };
 
-    IntentContext {
-        under_pressure,
-        in_transition: ctx.transition_side == Some(side),
-        late_game: minute >= 75,
-        protecting_lead: side_score > opp_score && minute >= 60,
-        chasing_game: side_score < opp_score && minute >= 55,
-    }
+    enrich_intent_context(
+        IntentContext {
+            under_pressure,
+            in_transition: ctx.transition_side == Some(side),
+            late_game: minute >= 75,
+            protecting_lead: side_score > opp_score && minute >= 60,
+            chasing_game: side_score < opp_score && minute >= 55,
+            ..IntentContext::default()
+        },
+        ctx.team(side).play_style,
+        &ctx.team(side).formation,
+    )
+}
+
+fn base_corner_pressure(ctx: &MatchContext, side: Side) -> f64 {
+    (formation_attack_modifier(&ctx.team(side).formation)
+        + attack_modifier(ctx.team(side).play_style, ctx.transition_side == Some(side)))
+        * 0.05
 }
 
 pub(super) fn effective_midfield(ctx: &MatchContext, side: Side) -> f64 {
