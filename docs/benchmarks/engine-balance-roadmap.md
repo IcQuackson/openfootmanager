@@ -157,6 +157,13 @@ Observed sample outcome after step 1:
 - style spread compressed substantially, which is good
 - home advantage and `3-4-3` underperformance were unchanged, so the remaining two steps are still needed
 
+Observed sample outcome after step 2:
+
+- equal-strength home goals edge moved from roughly `+0.52` to `+0.34`, which lands inside the target band
+- home possession moved closer to neutral at roughly `50.6%`
+- overall scoring stayed close to target at roughly `3.02` goals per match
+- `3-4-3` underperformance still remained, so the final step is still needed
+
 ## Benchmark workflow
 
 For each fix:
