@@ -92,6 +92,13 @@ Validation:
 - `npm run build`
 - benchmark samples versus previous commit
 
+Observed sample outcome after implementation:
+
+- balanced benchmark sample moved to roughly `3.03` goals per match, `10.69` home shots, `8.49` away shots
+- `Possession` stopped being the default top style in every shape
+- `HighPress` became the new strongest style, which is acceptable for this intermediate patch but still needs checking after formation semantics land
+- `Counter` became competitive instead of sitting at the bottom of the matrix
+
 ### Fix 3: Formation semantics and actor weighting
 
 Make structural shapes and player roles matter more.

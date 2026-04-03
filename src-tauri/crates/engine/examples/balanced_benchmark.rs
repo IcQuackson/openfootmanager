@@ -79,7 +79,9 @@ fn parse_matches(args: Vec<String>) -> u32 {
                 index += 2;
             }
             "--help" | "-h" => {
-                println!("Usage: cargo run -p engine --example balanced_benchmark --release -- [--matches N]");
+                println!(
+                    "Usage: cargo run -p engine --example balanced_benchmark --release -- [--matches N]"
+                );
                 std::process::exit(0);
             }
             unknown => {

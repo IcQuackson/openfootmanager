@@ -188,6 +188,7 @@ pub struct LiveMatchState {
     // Possession tracking
     home_possession_ticks: u32,
     away_possession_ticks: u32,
+    transition_side: Option<Side>,
 
     // Discipline
     yellows: HashMap<String, u8>,
@@ -253,6 +254,7 @@ impl LiveMatchState {
             events: Vec::with_capacity(300),
             home_possession_ticks: 0,
             away_possession_ticks: 0,
+            transition_side: None,
             yellows: HashMap::new(),
             sent_off: HashSet::new(),
             home_subs_made: 0,

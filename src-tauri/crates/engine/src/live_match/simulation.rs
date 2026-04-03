@@ -1,6 +1,7 @@
 use rand::Rng;
 
 use crate::event::{EventType, MatchEvent};
+use crate::shared::{midfield_defense_modifier, tempo_modifier};
 use crate::types::{Side, Zone};
 
 use super::{LiveMatchState, MatchPhase, MinuteResult};
@@ -155,6 +156,7 @@ impl LiveMatchState {
     pub(super) fn play_minute<R: Rng>(&mut self, rng: &mut R) -> MinuteResult {
         self.current_minute += 1;
         let minute = self.current_minute;
+        self.transition_side = None;
 
         // Track possession
         match self.possession {
@@ -167,7 +169,15 @@ impl LiveMatchState {
 
         // Simulate 1-3 actions per minute
         let mut minute_events = Vec::new();
-        let actions = rng.gen_range(1..=3u8);
+        let average_tempo =
+            (tempo_modifier(self.home.play_style) + tempo_modifier(self.away.play_style)) / 2.0;
+        let actions = if average_tempo >= 1.04 {
+            rng.gen_range(2..=4u8)
+        } else if average_tempo <= 0.95 {
+            rng.gen_range(1..=2u8)
+        } else {
+            rng.gen_range(1..=3u8)
+        };
         for _ in 0..actions {
             let new_events = self.resolve_action(minute, rng);
             minute_events.extend(new_events);
@@ -177,7 +187,8 @@ impl LiveMatchState {
         let poss_side = self.possession;
         let def_side = poss_side.opposite();
         let mid_att = self.effective_midfield(poss_side);
-        let mid_def = self.effective_midfield(def_side);
+        let mid_def = self.effective_midfield(def_side)
+            * midfield_defense_modifier(self.team_ref(def_side).play_style);
         let retain = mid_att / (mid_att + mid_def);
         if rng.gen_range(0.0..1.0f64) > retain {
             self.possession = def_side;

@@ -1,7 +1,11 @@
 use rand::Rng;
 
 use crate::event::{EventType, MatchEvent};
-use crate::shared::{PlayStylePhase, TraitContext, home_mod, play_style_modifier, trait_bonus};
+use crate::shared::{
+    TraitContext, attack_modifier, buildup_modifier, defense_modifier, home_mod,
+    midfield_attack_modifier, midfield_defense_modifier, press_modifier, trait_bonus,
+    transition_progress_chance,
+};
 use crate::types::{Position, Side, Zone};
 
 use super::MatchContext;
@@ -47,7 +51,11 @@ fn resolve_buildup<R: Rng>(
         + passer.composure as f64
         + passer.teamwork as f64)
         / 4.0
-        * trait_bonus(&passer, TraitContext::Passing);
+        * trait_bonus(&passer, TraitContext::Passing)
+        * buildup_modifier(
+            ctx.team(att_side).play_style,
+            ctx.transition_side == Some(att_side),
+        );
     let press = effective_press(ctx, def_side);
     let ball_zone = ctx.ball_zone;
 
@@ -69,6 +77,7 @@ fn resolve_buildup<R: Rng>(
                 .with_player(&interceptor.id),
         );
         ctx.possession = def_side;
+        ctx.transition_side = Some(def_side);
     }
 }
 
@@ -95,16 +104,11 @@ fn resolve_midfield<R: Rng>(
         / 4.0
         * trait_bonus(&defender, TraitContext::Tackling);
 
-    let att_mod = play_style_modifier(
+    let att_mod = midfield_attack_modifier(
         ctx.team(att_side).play_style,
-        PlayStylePhase::Midfield,
-        true,
+        ctx.transition_side == Some(att_side),
     );
-    let def_mod = play_style_modifier(
-        ctx.team(def_side).play_style,
-        PlayStylePhase::Midfield,
-        false,
-    );
+    let def_mod = midfield_defense_modifier(ctx.team(def_side).play_style);
     let att_eff = att_rating * att_mod * home_mod(att_side, ctx.config);
     let def_eff = def_rating * def_mod * home_mod(def_side, ctx.config);
     let success = att_eff / (att_eff + def_eff);
@@ -137,7 +141,14 @@ fn resolve_midfield<R: Rng>(
             );
         }
         ctx.possession = def_side;
-        ctx.ball_zone = Zone::Midfield;
+        ctx.transition_side = Some(def_side);
+        ctx.ball_zone = if rng.gen_range(0.0..1.0f64)
+            < transition_progress_chance(ctx.team(def_side).play_style)
+        {
+            Zone::attacking_third(def_side)
+        } else {
+            Zone::Midfield
+        };
     }
 }
 
@@ -164,12 +175,11 @@ fn resolve_attacking_third<R: Rng>(
         / 4.0
         * trait_bonus(&defender, TraitContext::Tackling);
 
-    let att_mod = play_style_modifier(ctx.team(att_side).play_style, PlayStylePhase::Attack, true);
-    let def_mod = play_style_modifier(
-        ctx.team(def_side).play_style,
-        PlayStylePhase::Defense,
-        false,
+    let att_mod = attack_modifier(
+        ctx.team(att_side).play_style,
+        ctx.transition_side == Some(att_side),
     );
+    let def_mod = defense_modifier(ctx.team(def_side).play_style);
     let att_eff = att_rating * att_mod * home_mod(att_side, ctx.config);
     let def_eff = def_rating * def_mod * home_mod(def_side, ctx.config);
     let success = att_eff / (att_eff + def_eff);
@@ -227,6 +237,7 @@ fn resolve_attacking_third<R: Rng>(
             }
         }
         ctx.possession = def_side;
+        ctx.transition_side = Some(def_side);
         ctx.ball_zone = Zone::defensive_third(def_side);
     }
 }
@@ -287,7 +298,7 @@ fn resolve_shot<R: Rng>(ctx: &mut MatchContext, minute: u8, att_side: Side, rng:
 
 pub(super) fn effective_midfield(ctx: &MatchContext, side: Side) -> f64 {
     let base = ctx.team(side).midfield_rating();
-    let modifier = play_style_modifier(ctx.team(side).play_style, PlayStylePhase::Midfield, true);
+    let modifier = midfield_attack_modifier(ctx.team(side).play_style, false);
     base * modifier * home_mod(side, ctx.config)
 }
 
@@ -296,6 +307,6 @@ fn effective_press(ctx: &MatchContext, pressing_side: Side) -> f64 {
     let base = team.position_attr_avg(Position::Midfielder, |p| {
         ((p.stamina as u16 + p.tackling as u16 + p.pace as u16) / 3) as u8
     });
-    let modifier = play_style_modifier(team.play_style, PlayStylePhase::Press, true);
+    let modifier = press_modifier(team.play_style);
     base * modifier * home_mod(pressing_side, ctx.config)
 }

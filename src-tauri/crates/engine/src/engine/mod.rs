@@ -5,7 +5,7 @@ use rand::Rng;
 
 use crate::event::{EventType, MatchEvent};
 use crate::report::MatchReport;
-use crate::shared::PlayerSnap;
+use crate::shared::{PlayerSnap, midfield_defense_modifier, tempo_modifier};
 use crate::types::{MatchConfig, PlayerData, Position, Side, TeamData, Zone};
 
 // ---------------------------------------------------------------------------
@@ -110,6 +110,7 @@ pub(crate) struct MatchContext<'a> {
     pub(crate) events: Vec<MatchEvent>,
     pub(crate) home_possession_ticks: u32,
     pub(crate) away_possession_ticks: u32,
+    pub(crate) transition_side: Option<Side>,
     pub(crate) yellows: std::collections::HashMap<String, u8>,
     pub(crate) sent_off: std::collections::HashSet<String>,
 }
@@ -127,6 +128,7 @@ impl<'a> MatchContext<'a> {
             events: Vec::with_capacity(200),
             home_possession_ticks: 0,
             away_possession_ticks: 0,
+            transition_side: None,
             yellows: std::collections::HashMap::new(),
             sent_off: std::collections::HashSet::new(),
         }
@@ -189,12 +191,22 @@ fn snap_player<R: Rng>(
 // ---------------------------------------------------------------------------
 
 fn simulate_minute<R: Rng>(ctx: &mut MatchContext, minute: u8, rng: &mut R) {
+    ctx.transition_side = None;
+
     match ctx.possession {
         Side::Home => ctx.home_possession_ticks += 1,
         Side::Away => ctx.away_possession_ticks += 1,
     }
 
-    let actions = rng.gen_range(1..=3u8);
+    let average_tempo =
+        (tempo_modifier(ctx.home.play_style) + tempo_modifier(ctx.away.play_style)) / 2.0;
+    let actions = if average_tempo >= 1.04 {
+        rng.gen_range(2..=4u8)
+    } else if average_tempo <= 0.95 {
+        rng.gen_range(1..=2u8)
+    } else {
+        rng.gen_range(1..=3u8)
+    };
     for _ in 0..actions {
         resolution::resolve_action(ctx, minute, rng);
     }
@@ -203,7 +215,8 @@ fn simulate_minute<R: Rng>(ctx: &mut MatchContext, minute: u8, rng: &mut R) {
     let poss_side = ctx.possession;
     let def_side = poss_side.opposite();
     let mid_att = resolution::effective_midfield(ctx, poss_side);
-    let mid_def = resolution::effective_midfield(ctx, def_side);
+    let mid_def = resolution::effective_midfield(ctx, def_side)
+        * midfield_defense_modifier(ctx.team(def_side).play_style);
     let retain = mid_att / (mid_att + mid_def);
     if rng.gen_range(0.0..1.0f64) > retain {
         ctx.possession = def_side;

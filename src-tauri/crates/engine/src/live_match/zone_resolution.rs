@@ -1,7 +1,10 @@
 use rand::Rng;
 
 use crate::event::{EventType, MatchEvent};
-use crate::shared::{PlayStylePhase, PlayerSnap, TraitContext, play_style_modifier, trait_bonus};
+use crate::shared::{
+    PlayerSnap, TraitContext, attack_modifier, buildup_modifier, defense_modifier,
+    midfield_attack_modifier, midfield_defense_modifier, trait_bonus, transition_progress_chance,
+};
 use crate::types::{Position, Side, Zone};
 
 use super::LiveMatchState;
@@ -43,7 +46,11 @@ impl LiveMatchState {
                 + passer.composure as f64
                 + passer.teamwork as f64)
                 / 4.0,
-        ) * trait_bonus(&passer, TraitContext::Passing);
+        ) * trait_bonus(&passer, TraitContext::Passing)
+            * buildup_modifier(
+                self.team_ref(att_side).play_style,
+                self.transition_side == Some(att_side),
+            );
         let press = self.effective_press(def_side);
         let ball_zone = self.ball_zone;
 
@@ -65,6 +72,7 @@ impl LiveMatchState {
             events.push(evt1);
             events.push(evt2);
             self.possession = def_side;
+            self.transition_side = Some(def_side);
         }
         events
     }
@@ -95,16 +103,11 @@ impl LiveMatchState {
         let def_rating = self.condition_adjusted_skill(&defender.id, def_raw)
             * trait_bonus(&defender, TraitContext::Tackling);
 
-        let att_mod = play_style_modifier(
+        let att_mod = midfield_attack_modifier(
             self.team_ref(att_side).play_style,
-            PlayStylePhase::Midfield,
-            true,
+            self.transition_side == Some(att_side),
         );
-        let def_mod = play_style_modifier(
-            self.team_ref(def_side).play_style,
-            PlayStylePhase::Midfield,
-            false,
-        );
+        let def_mod = midfield_defense_modifier(self.team_ref(def_side).play_style);
         let att_eff = att_rating * att_mod * crate::shared::home_mod(att_side, &self.config);
         let def_eff = def_rating * def_mod * crate::shared::home_mod(def_side, &self.config);
         let success = att_eff / (att_eff + def_eff);
@@ -132,7 +135,14 @@ impl LiveMatchState {
                 events.push(evt);
             }
             self.possession = def_side;
-            self.ball_zone = Zone::Midfield;
+            self.transition_side = Some(def_side);
+            self.ball_zone = if rng.gen_range(0.0..1.0f64)
+                < transition_progress_chance(self.team_ref(def_side).play_style)
+            {
+                Zone::attacking_third(def_side)
+            } else {
+                Zone::Midfield
+            };
         }
         events
     }
@@ -163,16 +173,11 @@ impl LiveMatchState {
         let def_rating = self.condition_adjusted_skill(&defender.id, def_raw)
             * trait_bonus(&defender, TraitContext::Tackling);
 
-        let att_mod = play_style_modifier(
+        let att_mod = attack_modifier(
             self.team_ref(att_side).play_style,
-            PlayStylePhase::Attack,
-            true,
+            self.transition_side == Some(att_side),
         );
-        let def_mod = play_style_modifier(
-            self.team_ref(def_side).play_style,
-            PlayStylePhase::Defense,
-            false,
-        );
+        let def_mod = defense_modifier(self.team_ref(def_side).play_style);
         let att_eff = att_rating * att_mod * crate::shared::home_mod(att_side, &self.config);
         let def_eff = def_rating * def_mod * crate::shared::home_mod(def_side, &self.config);
         let success = att_eff / (att_eff + def_eff);
@@ -232,6 +237,7 @@ impl LiveMatchState {
                 }
             }
             self.possession = def_side;
+            self.transition_side = Some(def_side);
             self.ball_zone = Zone::defensive_third(def_side);
         }
         events

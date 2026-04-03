@@ -1,6 +1,8 @@
 use rand::Rng;
 
-use crate::shared::{PlayStylePhase, PlayerSnap, home_mod, play_style_modifier};
+use crate::shared::{
+    PlayerSnap, fatigue_modifier, home_mod, midfield_attack_modifier, press_modifier,
+};
 use crate::types::{PlayerData, Position, Side, TeamData};
 
 use super::{LiveMatchState, SetPieceTakers};
@@ -13,18 +15,26 @@ impl LiveMatchState {
     pub(super) fn deplete_stamina_tick(&mut self) {
         let fatigue_rate = self.config.fatigue_per_minute;
         // Iterate over all on-pitch players
-        for p in self.home.players.iter().chain(self.away.players.iter()) {
-            if self.sent_off.contains(&p.id) {
-                continue;
-            }
-            let stamina_factor = p.stamina as f64 / 100.0;
-            let fitness_factor = p.fitness as f64 / 100.0;
-            // Higher stamina → less depletion; higher fitness → less depletion.
-            // Fitness scales the base depletion more aggressively (unfit players tire much faster).
-            let depletion =
-                fatigue_rate * (1.0 - stamina_factor * 0.5) * (1.3 - fitness_factor * 0.6);
-            if let Some(cond) = self.player_conditions.get_mut(&p.id) {
-                *cond = (*cond - depletion).max(5.0);
+        for (players, style) in [
+            (&self.home.players, self.home.play_style),
+            (&self.away.players, self.away.play_style),
+        ] {
+            let fatigue_style = fatigue_modifier(style);
+            for p in players {
+                if self.sent_off.contains(&p.id) {
+                    continue;
+                }
+                let stamina_factor = p.stamina as f64 / 100.0;
+                let fitness_factor = p.fitness as f64 / 100.0;
+                // Higher stamina → less depletion; higher fitness → less depletion.
+                // Fitness scales the base depletion more aggressively (unfit players tire much faster).
+                let depletion = fatigue_rate
+                    * fatigue_style
+                    * (1.0 - stamina_factor * 0.5)
+                    * (1.3 - fitness_factor * 0.6);
+                if let Some(cond) = self.player_conditions.get_mut(&p.id) {
+                    *cond = (*cond - depletion).max(5.0);
+                }
             }
         }
     }
@@ -133,11 +143,7 @@ impl LiveMatchState {
 
     pub(super) fn effective_midfield(&self, side: Side) -> f64 {
         let base = self.team_ref(side).midfield_rating();
-        let modifier = play_style_modifier(
-            self.team_ref(side).play_style,
-            PlayStylePhase::Midfield,
-            true,
-        );
+        let modifier = midfield_attack_modifier(self.team_ref(side).play_style, false);
         base * modifier * home_mod(side, &self.config)
     }
 
@@ -146,7 +152,7 @@ impl LiveMatchState {
         let base = team.position_attr_avg(Position::Midfielder, |p| {
             ((p.stamina as u16 + p.tackling as u16 + p.pace as u16) / 3) as u8
         });
-        let modifier = play_style_modifier(team.play_style, PlayStylePhase::Press, true);
+        let modifier = press_modifier(team.play_style);
         base * modifier * home_mod(pressing_side, &self.config)
     }
 

@@ -165,6 +165,7 @@ pub(crate) fn trait_bonus(snap: &PlayerSnap, context: TraitContext) -> f64 {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub(crate) enum PlayStylePhase {
     Midfield,
     Attack,
@@ -175,6 +176,7 @@ pub(crate) enum PlayStylePhase {
 #[derive(Debug, Clone, Copy)]
 #[allow(dead_code)]
 pub(crate) struct StyleProfile {
+    pub tempo: f64,
     pub buildup_retain: f64,
     pub midfield_control: f64,
     pub attack_intent: f64,
@@ -187,6 +189,7 @@ pub(crate) struct StyleProfile {
 pub(crate) fn style_profile(style: PlayStyle) -> StyleProfile {
     match style {
         PlayStyle::Balanced => StyleProfile {
+            tempo: 1.0,
             buildup_retain: 1.0,
             midfield_control: 1.0,
             attack_intent: 1.0,
@@ -196,53 +199,59 @@ pub(crate) fn style_profile(style: PlayStyle) -> StyleProfile {
             fatigue_burden: 1.0,
         },
         PlayStyle::Attacking => StyleProfile {
-            buildup_retain: 1.0,
-            midfield_control: 1.0,
-            attack_intent: 1.12,
-            defensive_solidity: 0.93,
-            press_intensity: 1.0,
+            tempo: 1.08,
+            buildup_retain: 0.98,
+            midfield_control: 0.99,
+            attack_intent: 1.08,
+            defensive_solidity: 0.94,
+            press_intensity: 1.03,
             transition_directness: 1.02,
-            fatigue_burden: 1.02,
+            fatigue_burden: 1.05,
         },
         PlayStyle::Defensive => StyleProfile {
-            buildup_retain: 1.0,
-            midfield_control: 1.0,
+            tempo: 0.92,
+            buildup_retain: 0.99,
+            midfield_control: 0.96,
             attack_intent: 0.93,
-            defensive_solidity: 1.12,
+            defensive_solidity: 1.10,
             press_intensity: 0.98,
             transition_directness: 0.98,
-            fatigue_burden: 0.99,
+            fatigue_burden: 0.95,
         },
         PlayStyle::Possession => StyleProfile {
-            buildup_retain: 1.08,
-            midfield_control: 1.15,
-            attack_intent: 0.97,
-            defensive_solidity: 1.0,
-            press_intensity: 1.0,
+            tempo: 0.94,
+            buildup_retain: 1.12,
+            midfield_control: 1.08,
+            attack_intent: 0.93,
+            defensive_solidity: 1.01,
+            press_intensity: 0.98,
             transition_directness: 0.94,
-            fatigue_burden: 1.0,
+            fatigue_burden: 0.97,
         },
         PlayStyle::Counter => StyleProfile {
-            buildup_retain: 0.97,
+            tempo: 0.96,
+            buildup_retain: 0.94,
             midfield_control: 0.92,
-            attack_intent: 1.18,
-            defensive_solidity: 1.0,
+            attack_intent: 0.95,
+            defensive_solidity: 1.04,
             press_intensity: 0.97,
-            transition_directness: 1.12,
-            fatigue_burden: 0.99,
+            transition_directness: 1.22,
+            fatigue_burden: 0.96,
         },
         PlayStyle::HighPress => StyleProfile {
-            buildup_retain: 1.0,
-            midfield_control: 1.0,
-            attack_intent: 1.0,
-            defensive_solidity: 0.95,
-            press_intensity: 1.20,
-            transition_directness: 1.04,
-            fatigue_burden: 1.08,
+            tempo: 1.06,
+            buildup_retain: 0.99,
+            midfield_control: 1.02,
+            attack_intent: 1.01,
+            defensive_solidity: 0.96,
+            press_intensity: 1.16,
+            transition_directness: 1.08,
+            fatigue_burden: 1.12,
         },
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn play_style_modifier(
     style: PlayStyle,
     phase: PlayStylePhase,
@@ -258,6 +267,62 @@ pub(crate) fn play_style_modifier(
         PlayStylePhase::Defense => profile.defensive_solidity,
         PlayStylePhase::Press => profile.press_intensity,
     }
+}
+
+pub(crate) fn tempo_modifier(style: PlayStyle) -> f64 {
+    style_profile(style).tempo
+}
+
+pub(crate) fn buildup_modifier(style: PlayStyle, in_transition: bool) -> f64 {
+    let profile = style_profile(style);
+    let transition_boost = if in_transition {
+        1.0 + (profile.transition_directness - 1.0) * 0.35
+    } else {
+        1.0
+    };
+    profile.buildup_retain * transition_boost
+}
+
+pub(crate) fn midfield_attack_modifier(style: PlayStyle, in_transition: bool) -> f64 {
+    let profile = style_profile(style);
+    let transition_boost = if in_transition {
+        1.0 + (profile.transition_directness - 1.0) * 0.55
+    } else {
+        1.0
+    };
+    profile.midfield_control * transition_boost
+}
+
+pub(crate) fn midfield_defense_modifier(style: PlayStyle) -> f64 {
+    let profile = style_profile(style);
+    profile.press_intensity * 0.55 + profile.defensive_solidity * 0.45
+}
+
+pub(crate) fn attack_modifier(style: PlayStyle, in_transition: bool) -> f64 {
+    let profile = style_profile(style);
+    let transition_boost = if in_transition {
+        profile.transition_directness
+    } else {
+        1.0
+    };
+    profile.attack_intent * transition_boost
+}
+
+pub(crate) fn defense_modifier(style: PlayStyle) -> f64 {
+    style_profile(style).defensive_solidity
+}
+
+pub(crate) fn press_modifier(style: PlayStyle) -> f64 {
+    style_profile(style).press_intensity
+}
+
+pub(crate) fn fatigue_modifier(style: PlayStyle) -> f64 {
+    style_profile(style).fatigue_burden
+}
+
+pub(crate) fn transition_progress_chance(style: PlayStyle) -> f64 {
+    let directness = style_profile(style).transition_directness;
+    ((directness - 1.0) * 1.15 + 0.10).clamp(0.05, 0.40)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -354,8 +419,9 @@ mod tests {
         assert!(possession.midfield_control > 1.0);
 
         let counter = style_profile(PlayStyle::Counter);
-        assert!(counter.attack_intent > 1.0);
+        assert!(counter.attack_intent < 1.0);
         assert!(counter.midfield_control < 1.0);
+        assert!(counter.transition_directness > 1.0);
 
         let high_press = style_profile(PlayStyle::HighPress);
         assert!(high_press.press_intensity > 1.0);
@@ -369,7 +435,7 @@ mod tests {
             1.0
         );
         assert!(play_style_modifier(PlayStyle::Possession, PlayStylePhase::Midfield, true) > 1.0);
-        assert!(play_style_modifier(PlayStyle::Counter, PlayStylePhase::Attack, true) > 1.0);
+        assert!(play_style_modifier(PlayStyle::Counter, PlayStylePhase::Attack, true) < 1.0);
         assert_eq!(
             play_style_modifier(PlayStyle::Attacking, PlayStylePhase::Attack, false),
             1.0
