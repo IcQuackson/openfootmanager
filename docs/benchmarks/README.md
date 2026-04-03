@@ -58,3 +58,7 @@ bash scripts/render-tactic-matrix-benchmark.sh --matches-per-leg 20 --allow-dirt
 Important engine note:
 
 - `4-5-1`, `4-2-3-1`, and `4-1-4-1` currently collapse to the same tactical shape in the benchmark because the engine only distinguishes defender/midfielder/forward counts there.
+
+Roadmap:
+
+- [engine-balance-roadmap.md](/home/quackson/Desktop/Coding/openfootmanager/docs/benchmarks/engine-balance-roadmap.md)

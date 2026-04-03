@@ -161,7 +161,7 @@ pub(crate) fn trait_bonus(snap: &PlayerSnap, context: TraitContext) -> f64 {
 }
 
 // ---------------------------------------------------------------------------
-// Play-style modifiers
+// Tactical profiles
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy)]
@@ -172,6 +172,77 @@ pub(crate) enum PlayStylePhase {
     Press,
 }
 
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
+pub(crate) struct StyleProfile {
+    pub buildup_retain: f64,
+    pub midfield_control: f64,
+    pub attack_intent: f64,
+    pub defensive_solidity: f64,
+    pub press_intensity: f64,
+    pub transition_directness: f64,
+    pub fatigue_burden: f64,
+}
+
+pub(crate) fn style_profile(style: PlayStyle) -> StyleProfile {
+    match style {
+        PlayStyle::Balanced => StyleProfile {
+            buildup_retain: 1.0,
+            midfield_control: 1.0,
+            attack_intent: 1.0,
+            defensive_solidity: 1.0,
+            press_intensity: 1.0,
+            transition_directness: 1.0,
+            fatigue_burden: 1.0,
+        },
+        PlayStyle::Attacking => StyleProfile {
+            buildup_retain: 1.0,
+            midfield_control: 1.0,
+            attack_intent: 1.12,
+            defensive_solidity: 0.93,
+            press_intensity: 1.0,
+            transition_directness: 1.02,
+            fatigue_burden: 1.02,
+        },
+        PlayStyle::Defensive => StyleProfile {
+            buildup_retain: 1.0,
+            midfield_control: 1.0,
+            attack_intent: 0.93,
+            defensive_solidity: 1.12,
+            press_intensity: 0.98,
+            transition_directness: 0.98,
+            fatigue_burden: 0.99,
+        },
+        PlayStyle::Possession => StyleProfile {
+            buildup_retain: 1.08,
+            midfield_control: 1.15,
+            attack_intent: 0.97,
+            defensive_solidity: 1.0,
+            press_intensity: 1.0,
+            transition_directness: 0.94,
+            fatigue_burden: 1.0,
+        },
+        PlayStyle::Counter => StyleProfile {
+            buildup_retain: 0.97,
+            midfield_control: 0.92,
+            attack_intent: 1.18,
+            defensive_solidity: 1.0,
+            press_intensity: 0.97,
+            transition_directness: 1.12,
+            fatigue_burden: 0.99,
+        },
+        PlayStyle::HighPress => StyleProfile {
+            buildup_retain: 1.0,
+            midfield_control: 1.0,
+            attack_intent: 1.0,
+            defensive_solidity: 0.95,
+            press_intensity: 1.20,
+            transition_directness: 1.04,
+            fatigue_burden: 1.08,
+        },
+    }
+}
+
 pub(crate) fn play_style_modifier(
     style: PlayStyle,
     phase: PlayStylePhase,
@@ -180,18 +251,76 @@ pub(crate) fn play_style_modifier(
     if !is_own_phase {
         return 1.0;
     }
-    match (style, phase) {
-        (PlayStyle::Attacking, PlayStylePhase::Attack) => 1.12,
-        (PlayStyle::Attacking, PlayStylePhase::Defense) => 0.93,
-        (PlayStyle::Defensive, PlayStylePhase::Defense) => 1.12,
-        (PlayStyle::Defensive, PlayStylePhase::Attack) => 0.93,
-        (PlayStyle::Possession, PlayStylePhase::Midfield) => 1.15,
-        (PlayStyle::Possession, PlayStylePhase::Attack) => 0.97,
-        (PlayStyle::Counter, PlayStylePhase::Attack) => 1.18,
-        (PlayStyle::Counter, PlayStylePhase::Midfield) => 0.92,
-        (PlayStyle::HighPress, PlayStylePhase::Press) => 1.20,
-        (PlayStyle::HighPress, PlayStylePhase::Defense) => 0.95,
-        _ => 1.0,
+    let profile = style_profile(style);
+    match phase {
+        PlayStylePhase::Midfield => profile.midfield_control,
+        PlayStylePhase::Attack => profile.attack_intent,
+        PlayStylePhase::Defense => profile.defensive_solidity,
+        PlayStylePhase::Press => profile.press_intensity,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
+pub(crate) struct FormationProfile {
+    pub buildup_width: f64,
+    pub midfield_support: f64,
+    pub box_presence: f64,
+    pub rest_defense: f64,
+}
+
+#[allow(dead_code)]
+pub(crate) fn formation_profile(formation: &str) -> FormationProfile {
+    match formation {
+        "4-4-2" => FormationProfile {
+            buildup_width: 1.0,
+            midfield_support: 1.0,
+            box_presence: 1.0,
+            rest_defense: 1.0,
+        },
+        "4-3-3" => FormationProfile {
+            buildup_width: 1.04,
+            midfield_support: 0.97,
+            box_presence: 1.05,
+            rest_defense: 0.98,
+        },
+        "3-5-2" => FormationProfile {
+            buildup_width: 0.96,
+            midfield_support: 1.06,
+            box_presence: 1.01,
+            rest_defense: 0.99,
+        },
+        "4-5-1" => FormationProfile {
+            buildup_width: 0.98,
+            midfield_support: 1.05,
+            box_presence: 0.94,
+            rest_defense: 1.03,
+        },
+        "4-2-3-1" => FormationProfile {
+            buildup_width: 1.0,
+            midfield_support: 1.05,
+            box_presence: 0.97,
+            rest_defense: 1.04,
+        },
+        "4-1-4-1" => FormationProfile {
+            buildup_width: 0.98,
+            midfield_support: 1.03,
+            box_presence: 0.93,
+            rest_defense: 1.06,
+        },
+        "3-4-3" => FormationProfile {
+            buildup_width: 1.06,
+            midfield_support: 0.95,
+            box_presence: 1.08,
+            rest_defense: 0.94,
+        },
+        "5-3-2" => FormationProfile {
+            buildup_width: 0.94,
+            midfield_support: 0.96,
+            box_presence: 0.99,
+            rest_defense: 1.08,
+        },
+        _ => formation_profile("4-4-2"),
     }
 }
 
@@ -203,5 +332,58 @@ pub(crate) fn home_mod(side: Side, config: &MatchConfig) -> f64 {
     match side {
         Side::Home => config.home_advantage,
         Side::Away => 1.0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PlayStylePhase, formation_profile, play_style_modifier, style_profile};
+    use crate::types::PlayStyle;
+
+    #[test]
+    fn style_profile_preserves_existing_phase_biases() {
+        let attacking = style_profile(PlayStyle::Attacking);
+        assert!(attacking.attack_intent > 1.0);
+        assert!(attacking.defensive_solidity < 1.0);
+
+        let defensive = style_profile(PlayStyle::Defensive);
+        assert!(defensive.defensive_solidity > 1.0);
+        assert!(defensive.attack_intent < 1.0);
+
+        let possession = style_profile(PlayStyle::Possession);
+        assert!(possession.midfield_control > 1.0);
+
+        let counter = style_profile(PlayStyle::Counter);
+        assert!(counter.attack_intent > 1.0);
+        assert!(counter.midfield_control < 1.0);
+
+        let high_press = style_profile(PlayStyle::HighPress);
+        assert!(high_press.press_intensity > 1.0);
+        assert!(high_press.defensive_solidity < 1.0);
+    }
+
+    #[test]
+    fn play_style_modifier_reads_profile_values() {
+        assert_eq!(
+            play_style_modifier(PlayStyle::Balanced, PlayStylePhase::Midfield, true),
+            1.0
+        );
+        assert!(play_style_modifier(PlayStyle::Possession, PlayStylePhase::Midfield, true) > 1.0);
+        assert!(play_style_modifier(PlayStyle::Counter, PlayStylePhase::Attack, true) > 1.0);
+        assert_eq!(
+            play_style_modifier(PlayStyle::Attacking, PlayStylePhase::Attack, false),
+            1.0
+        );
+    }
+
+    #[test]
+    fn formation_profiles_distinguish_four_five_one_variants() {
+        let generic = formation_profile("4-5-1");
+        let attacking_mid = formation_profile("4-2-3-1");
+        let holding_mid = formation_profile("4-1-4-1");
+
+        assert_ne!(generic.box_presence, attacking_mid.box_presence);
+        assert_ne!(generic.rest_defense, holding_mid.rest_defense);
+        assert_ne!(attacking_mid.buildup_width, holding_mid.buildup_width);
     }
 }
