@@ -164,6 +164,12 @@ Observed sample outcome after step 2:
 - overall scoring stayed close to target at roughly `3.02` goals per match
 - `3-4-3` underperformance still remained, so the final step is still needed
 
+Observed sample outcome after step 3:
+
+- `3-4-3` moved from the bottom shape to the middle of the table at roughly `1.37` average PPG
+- `3-4-3` tactics now range from competitive to clearly viable instead of clustering in the bottom tier
+- the balanced benchmark stayed unchanged, which is expected because it uses equal `4-4-2` teams and this step only touched `3-4-3`
+
 ## Benchmark workflow
 
 For each fix:

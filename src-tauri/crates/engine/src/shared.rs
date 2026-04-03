@@ -376,10 +376,10 @@ pub(crate) fn formation_profile(formation: &str) -> FormationProfile {
             rest_defense: 1.06,
         },
         "3-4-3" => FormationProfile {
-            buildup_width: 1.06,
-            midfield_support: 0.95,
-            box_presence: 1.08,
-            rest_defense: 0.94,
+            buildup_width: 1.08,
+            midfield_support: 1.00,
+            box_presence: 1.12,
+            rest_defense: 0.99,
         },
         "5-3-2" => FormationProfile {
             buildup_width: 0.94,
