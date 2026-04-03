@@ -55,9 +55,38 @@ Run a smaller local sample:
 bash scripts/render-tactic-matrix-benchmark.sh --matches-per-leg 20 --allow-dirty
 ```
 
-Important engine note:
+Run a larger lower-variance sample:
 
-- `4-5-1`, `4-2-3-1`, and `4-1-4-1` currently collapse to the same tactical shape in the benchmark because the engine only distinguishes defender/midfielder/forward counts there.
+```bash
+bash scripts/render-tactic-matrix-benchmark.sh --matches-per-leg 50 --allow-dirty
+```
+
+## Archetype Tactic Matrix Benchmark
+
+`benchmark:engine:archetypes` runs an archetype-aware tactic-template matrix and writes artifacts under `docs/benchmarks`:
+
+- `engine-archetype-tactic-matrix.json`
+- `engine-archetype-tactic-rankings.md`
+- `engine-archetype-tactic-matchups.md`
+
+Default scenario:
+
+- `50` matches per leg
+- home/away balancing for every unordered template pair
+- benchmark-only player archetypes such as `BallPlayingCb`, `Regista`, `BoxToBox`, `TargetMan`, and `CreatorForward`
+- squad-type summaries that show which player mixes each tactic thrives with or struggles against
+
+Run it:
+
+```bash
+npm run benchmark:engine:archetypes
+```
+
+Run a larger sample:
+
+```bash
+bash scripts/render-archetype-tactic-matrix-benchmark.sh --matches-per-leg 100 --allow-dirty
+```
 
 Roadmap:
 

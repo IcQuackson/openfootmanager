@@ -170,6 +170,29 @@ Observed sample outcome after step 3:
 - `3-4-3` tactics now range from competitive to clearly viable instead of clustering in the bottom tier
 - the balanced benchmark stayed unchanged, which is expected because it uses equal `4-4-2` teams and this step only touched `3-4-3`
 
+### Fix 5: Archetype-aware benchmark analysis
+
+The next benchmark phase should stop treating all defenders, midfielders, and forwards as interchangeable generic pieces.
+
+Changes:
+
+- add benchmark-only player archetypes such as `BallPlayingCb`, `Stopper`, `Regista`, `Destroyer`, `BoxToBox`, `Poacher`, and `TargetMan`
+- define tactic templates as `shape + style + squad type` instead of just `shape + style`
+- generate matchup analysis that reports which opponent squad types each tactic template thrives against or struggles with
+
+Expected result:
+
+- benchmark reports become useful for squad-building and tactical fit questions
+- tactic analysis can explain why a setup works, not just whether it wins with generic players
+- future engine balancing can be guided by role/archetype fit rather than formation modifiers alone
+
+Observed sample outcome after implementation:
+
+- `Creator Ten` and `Classic Pair` templates outperformed the more abstract control and pressing templates in the first `50`-per-leg sample
+- `Low Block Outlet` profiles proved effective into `Pressing Wave`, which validates the value of squad-type matchup reporting
+- `Pressing Wave` underperformed badly, suggesting the current engine still undervalues pressing-friendly player mixes relative to the fatigue/exposure cost
+- the benchmark now exposes tactical fit problems that were invisible in the generic tactic matrix
+
 ## Benchmark workflow
 
 For each fix:
