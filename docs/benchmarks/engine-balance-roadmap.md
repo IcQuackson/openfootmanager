@@ -128,6 +128,35 @@ Observed sample outcome after implementation:
 - shape spread is materially larger, with `4-2-3-1`, `4-5-1`, and `3-5-2` outperforming flatter structures in the current sample
 - role-weighted selection now consistently favors higher-involvement specialists, which is covered by regression tests for ball-playing defenders
 
+### Fix 4: Press, home, and shape correction pass
+
+The current benchmark still has three clear issues:
+
+- `HighPress` is the strongest style by too wide a margin
+- `Defensive` is not strong enough as a low-event counter-style
+- home advantage is still too large in equal-strength samples
+- `3-4-3` is underperforming across multiple styles
+
+Planned sequence:
+
+1. nerf `HighPress` and buff `Defensive`
+2. reduce home advantage
+3. repair `3-4-3` semantics without collapsing shape identity again
+
+Target outcomes for this pass:
+
+- reduce `HighPress` average PPG so it is still competitive but not the default best style
+- improve `Defensive` shot suppression and matchup viability, especially into aggressive setups
+- move equal-strength home goals edge closer to the `+0.15` to `+0.35` target band
+- lift `3-4-3` out of the bottom tier while keeping its risk/reward identity
+
+Observed sample outcome after step 1:
+
+- `HighPress` dropped from top style to the middle of the pack at roughly `1.36` average PPG
+- `Defensive` became the strongest style in the sample at roughly `1.41` average PPG with lower goals against
+- style spread compressed substantially, which is good
+- home advantage and `3-4-3` underperformance were unchanged, so the remaining two steps are still needed
+
 ## Benchmark workflow
 
 For each fix:
