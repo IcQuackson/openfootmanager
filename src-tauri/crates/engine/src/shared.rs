@@ -1,3 +1,5 @@
+use rand::Rng;
+
 use crate::types::{MatchConfig, PlayStyle, PlayerData, Side};
 
 // ---------------------------------------------------------------------------
@@ -387,6 +389,87 @@ pub(crate) fn formation_profile(formation: &str) -> FormationProfile {
         },
         _ => formation_profile("4-4-2"),
     }
+}
+
+pub(crate) fn formation_buildup_modifier(formation: &str) -> f64 {
+    formation_profile(formation).buildup_width
+}
+
+pub(crate) fn formation_midfield_modifier(formation: &str) -> f64 {
+    formation_profile(formation).midfield_support
+}
+
+pub(crate) fn formation_attack_modifier(formation: &str) -> f64 {
+    formation_profile(formation).box_presence
+}
+
+pub(crate) fn formation_rest_defense_modifier(formation: &str) -> f64 {
+    formation_profile(formation).rest_defense
+}
+
+pub(crate) fn player_action_weight(
+    player: &PlayerData,
+    preferred: crate::types::Position,
+    formation: &str,
+) -> f64 {
+    use crate::types::Position;
+
+    let profile = formation_profile(formation);
+    let position_fit = if player.position == preferred {
+        1.7
+    } else {
+        0.55
+    };
+    let role_skill = match preferred {
+        Position::Goalkeeper => {
+            (player.handling as f64 + player.reflexes as f64 + player.positioning as f64) / 3.0
+        }
+        Position::Defender => {
+            ((player.passing as f64
+                + player.vision as f64
+                + player.composure as f64
+                + player.teamwork as f64)
+                / 4.0)
+                * (profile.buildup_width * 0.65 + profile.rest_defense * 0.35)
+        }
+        Position::Midfielder => {
+            ((player.passing as f64
+                + player.vision as f64
+                + player.decisions as f64
+                + player.teamwork as f64
+                + player.stamina as f64)
+                / 5.0)
+                * profile.midfield_support
+        }
+        Position::Forward => {
+            ((player.shooting as f64
+                + player.positioning as f64
+                + player.composure as f64
+                + player.decisions as f64
+                + player.pace as f64)
+                / 5.0)
+                * profile.box_presence
+        }
+    };
+
+    (role_skill * position_fit).max(1.0)
+}
+
+pub(crate) fn weighted_index<R: Rng>(weights: &[f64], rng: &mut R) -> usize {
+    let total = weights.iter().copied().sum::<f64>();
+    if total <= f64::EPSILON {
+        return rng.gen_range(0..weights.len());
+    }
+
+    let mut target = rng.gen_range(0.0..total);
+    for (index, weight) in weights.iter().copied().enumerate() {
+        if target <= weight {
+            return index;
+        }
+        target -= weight;
+    }
+
+    weights.len().saturating_sub(1)
 }
 
 // ---------------------------------------------------------------------------

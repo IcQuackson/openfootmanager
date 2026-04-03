@@ -121,6 +121,13 @@ Validation:
 - `npm run build`
 - benchmark samples versus previous commit
 
+Observed sample outcome after implementation:
+
+- balanced benchmark sample stayed close to target at roughly `2.98` goals per match
+- `4-2-3-1`, `4-5-1`, and `4-1-4-1` now separate in the tactic matrix instead of behaving as aliases
+- shape spread is materially larger, with `4-2-3-1`, `4-5-1`, and `3-5-2` outperforming flatter structures in the current sample
+- role-weighted selection now consistently favors higher-involvement specialists, which is covered by regression tests for ball-playing defenders
+
 ## Benchmark workflow
 
 For each fix:

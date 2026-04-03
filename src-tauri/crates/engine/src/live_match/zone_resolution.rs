@@ -3,7 +3,9 @@ use rand::Rng;
 use crate::event::{EventType, MatchEvent};
 use crate::shared::{
     PlayerSnap, TraitContext, attack_modifier, buildup_modifier, defense_modifier,
-    midfield_attack_modifier, midfield_defense_modifier, trait_bonus, transition_progress_chance,
+    formation_attack_modifier, formation_buildup_modifier, formation_midfield_modifier,
+    formation_rest_defense_modifier, midfield_attack_modifier, midfield_defense_modifier,
+    trait_bonus, transition_progress_chance,
 };
 use crate::types::{Position, Side, Zone};
 
@@ -50,7 +52,8 @@ impl LiveMatchState {
             * buildup_modifier(
                 self.team_ref(att_side).play_style,
                 self.transition_side == Some(att_side),
-            );
+            )
+            * formation_buildup_modifier(&self.team_ref(att_side).formation);
         let press = self.effective_press(def_side);
         let ball_zone = self.ball_zone;
 
@@ -106,8 +109,10 @@ impl LiveMatchState {
         let att_mod = midfield_attack_modifier(
             self.team_ref(att_side).play_style,
             self.transition_side == Some(att_side),
-        );
-        let def_mod = midfield_defense_modifier(self.team_ref(def_side).play_style);
+        ) * formation_midfield_modifier(&self.team_ref(att_side).formation);
+        let def_mod = midfield_defense_modifier(self.team_ref(def_side).play_style)
+            * ((formation_midfield_modifier(&self.team_ref(def_side).formation) * 0.6)
+                + (formation_rest_defense_modifier(&self.team_ref(def_side).formation) * 0.4));
         let att_eff = att_rating * att_mod * crate::shared::home_mod(att_side, &self.config);
         let def_eff = def_rating * def_mod * crate::shared::home_mod(def_side, &self.config);
         let success = att_eff / (att_eff + def_eff);
@@ -176,8 +181,9 @@ impl LiveMatchState {
         let att_mod = attack_modifier(
             self.team_ref(att_side).play_style,
             self.transition_side == Some(att_side),
-        );
-        let def_mod = defense_modifier(self.team_ref(def_side).play_style);
+        ) * formation_attack_modifier(&self.team_ref(att_side).formation);
+        let def_mod = defense_modifier(self.team_ref(def_side).play_style)
+            * formation_rest_defense_modifier(&self.team_ref(def_side).formation);
         let att_eff = att_rating * att_mod * crate::shared::home_mod(att_side, &self.config);
         let def_eff = def_rating * def_mod * crate::shared::home_mod(def_side, &self.config);
         let success = att_eff / (att_eff + def_eff);
@@ -261,8 +267,12 @@ impl LiveMatchState {
         let gk_rating = self.condition_adjusted_skill(&goalkeeper.id, gk_raw)
             * trait_bonus(&goalkeeper, TraitContext::Goalkeeping);
 
-        let accuracy =
-            (self.config.shot_accuracy_base + (shoot_rating - 50.0) / 200.0).clamp(0.15, 0.85);
+        let accuracy = (self.config.shot_accuracy_base
+            + (shoot_rating - 50.0) / 200.0
+            + (formation_attack_modifier(&self.team_ref(att_side).formation)
+                - formation_rest_defense_modifier(&self.team_ref(def_side).formation))
+                * 0.04)
+            .clamp(0.15, 0.85);
         let zone = Zone::attacking_box(att_side);
 
         if rng.gen_range(0.0..1.0f64) > accuracy {

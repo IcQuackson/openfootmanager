@@ -248,8 +248,6 @@ fn run_matrix(matches_per_leg: u32) -> Output {
         notes: vec![
             "Each unordered matchup is simulated home and away to reduce home-advantage bias."
                 .to_string(),
-            "The current engine only distinguishes defender-midfielder-forward counts, so 4-5-1, 4-2-3-1, and 4-1-4-1 are equivalent here."
-                .to_string(),
             "All teams use equal-quality role-specific archetypes to isolate tactical interaction instead of squad-quality differences."
                 .to_string(),
         ],
@@ -433,7 +431,21 @@ fn tactic_defs() -> Vec<TacticDef> {
         },
         Shape {
             label: "4-5-1",
-            aliases: &["4-5-1", "4-2-3-1", "4-1-4-1"],
+            aliases: &["4-5-1"],
+            defenders: 4,
+            midfielders: 5,
+            forwards: 1,
+        },
+        Shape {
+            label: "4-2-3-1",
+            aliases: &["4-2-3-1"],
+            defenders: 4,
+            midfielders: 5,
+            forwards: 1,
+        },
+        Shape {
+            label: "4-1-4-1",
+            aliases: &["4-1-4-1"],
             defenders: 4,
             midfielders: 5,
             forwards: 1,

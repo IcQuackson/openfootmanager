@@ -2,8 +2,9 @@ use rand::Rng;
 
 use crate::event::{EventType, MatchEvent};
 use crate::shared::{
-    TraitContext, attack_modifier, buildup_modifier, defense_modifier, home_mod,
-    midfield_attack_modifier, midfield_defense_modifier, press_modifier, trait_bonus,
+    TraitContext, attack_modifier, buildup_modifier, defense_modifier, formation_attack_modifier,
+    formation_buildup_modifier, formation_midfield_modifier, formation_rest_defense_modifier,
+    home_mod, midfield_attack_modifier, midfield_defense_modifier, press_modifier, trait_bonus,
     transition_progress_chance,
 };
 use crate::types::{Position, Side, Zone};
@@ -55,7 +56,8 @@ fn resolve_buildup<R: Rng>(
         * buildup_modifier(
             ctx.team(att_side).play_style,
             ctx.transition_side == Some(att_side),
-        );
+        )
+        * formation_buildup_modifier(&ctx.team(att_side).formation);
     let press = effective_press(ctx, def_side);
     let ball_zone = ctx.ball_zone;
 
@@ -107,8 +109,10 @@ fn resolve_midfield<R: Rng>(
     let att_mod = midfield_attack_modifier(
         ctx.team(att_side).play_style,
         ctx.transition_side == Some(att_side),
-    );
-    let def_mod = midfield_defense_modifier(ctx.team(def_side).play_style);
+    ) * formation_midfield_modifier(&ctx.team(att_side).formation);
+    let def_mod = midfield_defense_modifier(ctx.team(def_side).play_style)
+        * ((formation_midfield_modifier(&ctx.team(def_side).formation) * 0.6)
+            + (formation_rest_defense_modifier(&ctx.team(def_side).formation) * 0.4));
     let att_eff = att_rating * att_mod * home_mod(att_side, ctx.config);
     let def_eff = def_rating * def_mod * home_mod(def_side, ctx.config);
     let success = att_eff / (att_eff + def_eff);
@@ -178,8 +182,9 @@ fn resolve_attacking_third<R: Rng>(
     let att_mod = attack_modifier(
         ctx.team(att_side).play_style,
         ctx.transition_side == Some(att_side),
-    );
-    let def_mod = defense_modifier(ctx.team(def_side).play_style);
+    ) * formation_attack_modifier(&ctx.team(att_side).formation);
+    let def_mod = defense_modifier(ctx.team(def_side).play_style)
+        * formation_rest_defense_modifier(&ctx.team(def_side).formation);
     let att_eff = att_rating * att_mod * home_mod(att_side, ctx.config);
     let def_eff = def_rating * def_mod * home_mod(def_side, ctx.config);
     let success = att_eff / (att_eff + def_eff);
@@ -256,8 +261,12 @@ fn resolve_shot<R: Rng>(ctx: &mut MatchContext, minute: u8, att_side: Side, rng:
             / 3.0
             * trait_bonus(&goalkeeper, TraitContext::Goalkeeping);
 
-    let accuracy =
-        (ctx.config.shot_accuracy_base + (shoot_rating - 50.0) / 200.0).clamp(0.15, 0.85);
+    let accuracy = (ctx.config.shot_accuracy_base
+        + (shoot_rating - 50.0) / 200.0
+        + (formation_attack_modifier(&ctx.team(att_side).formation)
+            - formation_rest_defense_modifier(&ctx.team(def_side).formation))
+            * 0.04)
+        .clamp(0.15, 0.85);
     let zone = Zone::attacking_box(att_side);
 
     if rng.gen_range(0.0..1.0f64) > accuracy {
@@ -298,7 +307,8 @@ fn resolve_shot<R: Rng>(ctx: &mut MatchContext, minute: u8, att_side: Side, rng:
 
 pub(super) fn effective_midfield(ctx: &MatchContext, side: Side) -> f64 {
     let base = ctx.team(side).midfield_rating();
-    let modifier = midfield_attack_modifier(ctx.team(side).play_style, false);
+    let modifier = midfield_attack_modifier(ctx.team(side).play_style, false)
+        * formation_midfield_modifier(&ctx.team(side).formation);
     base * modifier * home_mod(side, ctx.config)
 }
 
@@ -307,6 +317,8 @@ fn effective_press(ctx: &MatchContext, pressing_side: Side) -> f64 {
     let base = team.position_attr_avg(Position::Midfielder, |p| {
         ((p.stamina as u16 + p.tackling as u16 + p.pace as u16) / 3) as u8
     });
-    let modifier = press_modifier(team.play_style);
+    let modifier = press_modifier(team.play_style)
+        * ((formation_midfield_modifier(&team.formation) * 0.65)
+            + (formation_rest_defense_modifier(&team.formation) * 0.35));
     base * modifier * home_mod(pressing_side, ctx.config)
 }

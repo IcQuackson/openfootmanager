@@ -1,7 +1,8 @@
 use rand::Rng;
 
 use crate::shared::{
-    PlayerSnap, fatigue_modifier, home_mod, midfield_attack_modifier, press_modifier,
+    PlayerSnap, fatigue_modifier, formation_midfield_modifier, formation_rest_defense_modifier,
+    home_mod, midfield_attack_modifier, player_action_weight, press_modifier, weighted_index,
 };
 use crate::types::{PlayerData, Position, Side, TeamData};
 
@@ -82,7 +83,19 @@ impl LiveMatchState {
         if pool.is_empty() {
             return PlayerSnap::from(&team.players[0]);
         }
-        PlayerSnap::from(pool[rng.gen_range(0..pool.len())])
+        let weights = pool
+            .iter()
+            .map(|player| {
+                let condition = self
+                    .player_conditions
+                    .get(&player.id)
+                    .copied()
+                    .unwrap_or(player.condition as f64)
+                    / 100.0;
+                player_action_weight(player, preferred, &team.formation) * (0.6 + condition * 0.4)
+            })
+            .collect::<Vec<_>>();
+        PlayerSnap::from(pool[weighted_index(&weights, rng)])
     }
 
     pub(super) fn snap_player_by_id(&self, player_id: &str, side: Side) -> PlayerSnap {
@@ -143,7 +156,8 @@ impl LiveMatchState {
 
     pub(super) fn effective_midfield(&self, side: Side) -> f64 {
         let base = self.team_ref(side).midfield_rating();
-        let modifier = midfield_attack_modifier(self.team_ref(side).play_style, false);
+        let modifier = midfield_attack_modifier(self.team_ref(side).play_style, false)
+            * formation_midfield_modifier(&self.team_ref(side).formation);
         base * modifier * home_mod(side, &self.config)
     }
 
@@ -152,7 +166,9 @@ impl LiveMatchState {
         let base = team.position_attr_avg(Position::Midfielder, |p| {
             ((p.stamina as u16 + p.tackling as u16 + p.pace as u16) / 3) as u8
         });
-        let modifier = press_modifier(team.play_style);
+        let modifier = press_modifier(team.play_style)
+            * ((formation_midfield_modifier(&team.formation) * 0.65)
+                + (formation_rest_defense_modifier(&team.formation) * 0.35));
         base * modifier * home_mod(pressing_side, &self.config)
     }
 

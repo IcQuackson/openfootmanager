@@ -37,10 +37,20 @@ fn make_player(id: &str, name: &str, position: Position, skill: u8) -> PlayerDat
 }
 
 fn make_team(id: &str, name: &str, skill: u8, play_style: PlayStyle) -> TeamData {
+    make_team_with_formation(id, name, skill, play_style, "4-4-2")
+}
+
+fn make_team_with_formation(
+    id: &str,
+    name: &str,
+    skill: u8,
+    play_style: PlayStyle,
+    formation: &str,
+) -> TeamData {
     TeamData {
         id: id.to_string(),
         name: name.to_string(),
-        formation: "4-4-2".to_string(),
+        formation: formation.to_string(),
         play_style,
         players: vec![
             make_player(&format!("{id}_gk1"), "GK1", Position::Goalkeeper, skill),
@@ -56,6 +66,21 @@ fn make_team(id: &str, name: &str, skill: u8, play_style: PlayStyle) -> TeamData
             make_player(&format!("{id}_fwd2"), "FWD2", Position::Forward, skill),
         ],
     }
+}
+
+fn make_weighted_defender_team(id: &str, name: &str, play_style: PlayStyle) -> TeamData {
+    let mut team = make_team(id, name, 65, play_style);
+    if let Some(playmaker_cb) = team
+        .players
+        .iter_mut()
+        .find(|player| player.id.ends_with("def1"))
+    {
+        playmaker_cb.passing = 92;
+        playmaker_cb.vision = 90;
+        playmaker_cb.composure = 88;
+        playmaker_cb.teamwork = 90;
+    }
+    team
 }
 
 fn seeded_rng(seed: u64) -> StdRng {
@@ -487,6 +512,47 @@ fn possession_style_has_more_possession() {
     );
 }
 
+#[test]
+fn four_five_one_variants_produce_distinct_average_profiles() {
+    let attacking_mid = make_team_with_formation("am", "AM FC", 65, PlayStyle::Balanced, "4-2-3-1");
+    let holding_mid = make_team_with_formation("hm", "HM FC", 65, PlayStyle::Balanced, "4-1-4-1");
+    let opponent = make_team("opp", "Opp FC", 65, PlayStyle::Balanced);
+    let config = MatchConfig {
+        home_advantage: 1.0,
+        ..MatchConfig::default()
+    };
+
+    let mut attacking_mid_goals_for = 0.0;
+    let mut attacking_mid_goals_against = 0.0;
+    let mut holding_mid_goals_for = 0.0;
+    let mut holding_mid_goals_against = 0.0;
+
+    for seed in 0..160 {
+        let am_report =
+            simulate_with_rng(&attacking_mid, &opponent, &config, &mut seeded_rng(seed));
+        attacking_mid_goals_for += f64::from(am_report.home_goals);
+        attacking_mid_goals_against += f64::from(am_report.away_goals);
+
+        let hm_report = simulate_with_rng(
+            &holding_mid,
+            &opponent,
+            &config,
+            &mut seeded_rng(seed + 10_000),
+        );
+        holding_mid_goals_for += f64::from(hm_report.home_goals);
+        holding_mid_goals_against += f64::from(hm_report.away_goals);
+    }
+
+    let trials = 160.0;
+    let am_net = (attacking_mid_goals_for - attacking_mid_goals_against) / trials;
+    let hm_net = (holding_mid_goals_for - holding_mid_goals_against) / trials;
+
+    assert!(
+        (am_net - hm_net).abs() > 0.04,
+        "Expected 4-2-3-1 and 4-1-4-1 to diverge; got {am_net:.3} vs {hm_net:.3}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Team/player stats aggregation tests
 // ---------------------------------------------------------------------------
@@ -601,6 +667,49 @@ fn defenders_record_pass_attempts_over_multiple_matches() {
     assert!(
         total_defender_pass_attempts > 0,
         "Expected defenders to record pass attempts across repeated simulations"
+    );
+}
+
+#[test]
+fn weighted_selection_favors_ball_playing_defenders() {
+    let home = make_weighted_defender_team("home", "Home FC", PlayStyle::Balanced);
+    let away = make_team("away", "Away FC", 65, PlayStyle::Balanced);
+    let config = MatchConfig::default();
+
+    let featured_id = format!("{}_def1", home.id);
+    let peer_ids = home
+        .players
+        .iter()
+        .filter(|player| player.position == Position::Defender && player.id != featured_id)
+        .map(|player| player.id.clone())
+        .collect::<Vec<_>>();
+
+    let mut featured_total = 0u32;
+    let mut peer_total = 0u32;
+    for seed in 0..120 {
+        let report = simulate_with_rng(&home, &away, &config, &mut seeded_rng(seed));
+        featured_total += report
+            .player_stats
+            .get(&featured_id)
+            .map(|stats| u32::from(stats.passes_attempted))
+            .unwrap_or(0);
+        peer_total += peer_ids
+            .iter()
+            .map(|player_id| {
+                report
+                    .player_stats
+                    .get(player_id)
+                    .map(|stats| u32::from(stats.passes_attempted))
+                    .unwrap_or(0)
+            })
+            .sum::<u32>();
+    }
+
+    let peer_average = peer_total as f64 / peer_ids.len() as f64;
+    assert!(
+        featured_total as f64 > peer_average * 1.2,
+        "Expected featured defender involvement to stand out: featured={}, peer_avg={peer_average:.1}",
+        featured_total
     );
 }
 

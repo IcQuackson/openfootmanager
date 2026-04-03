@@ -5,7 +5,9 @@ use rand::Rng;
 
 use crate::event::{EventType, MatchEvent};
 use crate::report::MatchReport;
-use crate::shared::{PlayerSnap, midfield_defense_modifier, tempo_modifier};
+use crate::shared::{
+    PlayerSnap, midfield_defense_modifier, player_action_weight, tempo_modifier, weighted_index,
+};
 use crate::types::{MatchConfig, PlayerData, Position, Side, TeamData, Zone};
 
 // ---------------------------------------------------------------------------
@@ -183,7 +185,11 @@ fn snap_player<R: Rng>(
     if pool.is_empty() {
         return PlayerSnap::from(&team.players[0]);
     }
-    PlayerSnap::from(pool[rng.gen_range(0..pool.len())])
+    let weights = pool
+        .iter()
+        .map(|player| player_action_weight(player, preferred, &team.formation))
+        .collect::<Vec<_>>();
+    PlayerSnap::from(pool[weighted_index(&weights, rng)])
 }
 
 // ---------------------------------------------------------------------------
