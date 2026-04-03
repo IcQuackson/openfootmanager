@@ -103,6 +103,12 @@ fn reconcile_post_v6_schema(conn: &Connection) -> Result<(), String> {
         "fitness",
         include_str!("sql/v013_player_fitness.sql"),
     )?;
+    ensure_column(
+        conn,
+        "teams",
+        "tactical_roles",
+        include_str!("sql/v014_team_tactical_roles.sql"),
+    )?;
 
     conn.pragma_update(None, "user_version", MIGRATION_COUNT as i64)
         .map_err(|e| format!("Failed to update schema version: {}", e))?;

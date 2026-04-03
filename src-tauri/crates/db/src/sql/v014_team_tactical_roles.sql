@@ -1,0 +1,2 @@
+ALTER TABLE teams
+ADD COLUMN tactical_roles TEXT NOT NULL DEFAULT '[]';

@@ -1,5 +1,6 @@
 use engine::{
-    MatchConfig, MatchReport, PlayStyle, PlayerData, Position, TeamData, simulate_with_rng,
+    MatchConfig, MatchReport, PlayStyle, PlayerData, Position, TacticalRole, TeamData,
+    simulate_with_rng,
 };
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -248,7 +249,7 @@ fn run_matrix(matches_per_leg: u32) -> Output {
         notes: vec![
             "Each unordered matchup is simulated home and away to reduce home-advantage bias."
                 .to_string(),
-            "All teams use equal-quality role-specific archetypes to isolate tactical interaction instead of squad-quality differences."
+            "All teams use equal-quality role-specific synthetic squads to isolate tactical interaction instead of squad-quality differences."
                 .to_string(),
         ],
         style_summary: build_group_summary(&tactic_results, |t| &t.style),
@@ -546,6 +547,7 @@ fn make_goalkeeper(id: &str, name: &str) -> PlayerData {
         reflexes: 74,
         aerial: 72,
         traits: vec![],
+        role: TacticalRole::Goalkeeper,
     }
 }
 
@@ -577,6 +579,7 @@ fn make_defender(id: &str, name: &str) -> PlayerData {
         reflexes: 35,
         aerial: skill + 7,
         traits: vec![],
+        role: TacticalRole::CenterBackStopper,
     }
 }
 
@@ -608,6 +611,7 @@ fn make_midfielder(id: &str, name: &str) -> PlayerData {
         reflexes: 35,
         aerial: skill - 6,
         traits: vec![],
+        role: TacticalRole::BoxToBoxMidfielder,
     }
 }
 
@@ -639,5 +643,6 @@ fn make_forward(id: &str, name: &str) -> PlayerData {
         reflexes: 35,
         aerial: skill + 1,
         traits: vec![],
+        role: TacticalRole::Poacher,
     }
 }

@@ -7,7 +7,9 @@ use ofm_core::game::Game;
 use ofm_core::player_identity;
 
 use crate::repositories::message_repo;
-use crate::save_manager::{SaveManager, canonicalize_game_starting_xi_ids};
+use crate::save_manager::{
+    SaveManager, canonicalize_game_player_traits_and_roles, canonicalize_game_starting_xi_ids,
+};
 
 /// A row extracted from the legacy `saves.db` file.
 #[derive(Debug)]
@@ -163,6 +165,7 @@ fn migrate_single_save(
         .map_err(|e| format!("Failed to parse game JSON: {}", e))?;
 
     canonicalize_game_starting_xi_ids(&mut game);
+    canonicalize_game_player_traits_and_roles(&mut game);
     player_identity::upgrade_game_player_identities(&mut game);
     message_repo::normalize_messages(&mut game.messages);
 

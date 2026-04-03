@@ -1,7 +1,8 @@
 use crate::game::Game;
 use crate::player_rating::{effective_rating_for_assignment, formation_slots, natural_ovr};
 use domain::player::Position as DomainPosition;
-use engine::{PlayStyle, PlayerData, Position, TeamData};
+use domain::team::{TacticalRole as DomainTacticalRole, default_tactical_roles_for_formation};
+use engine::{PlayStyle, PlayerData, Position, TacticalRole, TeamData};
 
 // ---------------------------------------------------------------------------
 // Domain → Engine conversion with starting XI / bench split
@@ -32,10 +33,19 @@ pub(super) fn build_team_with_bench(game: &Game, team_id: &str) -> (TeamData, Ve
         .filter(|p| p.team_id.as_deref() == Some(team_id) && p.injury.is_none())
         .collect();
     let slots = formation_slots(&formation);
+    let tactical_roles = team
+        .map(|team| {
+            if team.tactical_roles.len() == slots.len() {
+                team.tactical_roles.clone()
+            } else {
+                default_tactical_roles_for_formation(&formation)
+            }
+        })
+        .unwrap_or_else(|| default_tactical_roles_for_formation(&formation));
     let mut used_ids = std::collections::HashSet::new();
     let mut starting_xi = Vec::with_capacity(11);
 
-    for slot in slots.iter().take(11) {
+    for (index, slot) in slots.iter().take(11).enumerate() {
         let best_player = available_players
             .iter()
             .copied()
@@ -51,7 +61,11 @@ pub(super) fn build_team_with_bench(game: &Game, team_id: &str) -> (TeamData, Ve
         };
 
         used_ids.insert(player.id.clone());
-        starting_xi.push(to_engine_player(player));
+        let role = tactical_roles
+            .get(index)
+            .copied()
+            .unwrap_or_else(|| default_role_for_slot(slot));
+        starting_xi.push(to_engine_player(player, role));
     }
 
     let mut bench_domain: Vec<&domain::player::Player> = available_players
@@ -63,7 +77,13 @@ pub(super) fn build_team_with_bench(game: &Game, team_id: &str) -> (TeamData, Ve
             .partial_cmp(&natural_ovr(left))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    let bench = bench_domain.into_iter().map(to_engine_player).collect();
+    let bench = bench_domain
+        .into_iter()
+        .map(|player| {
+            let role = default_role_for_position(&player.position);
+            to_engine_player(player, role)
+        })
+        .collect();
 
     let team_data = TeamData {
         id: team_id.to_string(),
@@ -76,7 +96,7 @@ pub(super) fn build_team_with_bench(game: &Game, team_id: &str) -> (TeamData, Ve
     (team_data, bench)
 }
 
-fn to_engine_player(p: &domain::player::Player) -> PlayerData {
+fn to_engine_player(p: &domain::player::Player, role: DomainTacticalRole) -> PlayerData {
     let pos = match p.position.to_group_position() {
         DomainPosition::Goalkeeper => Position::Goalkeeper,
         DomainPosition::Defender => Position::Defender,
@@ -111,7 +131,58 @@ fn to_engine_player(p: &domain::player::Player) -> PlayerData {
         reflexes: p.attributes.reflexes,
         aerial: p.attributes.aerial,
         traits: p.traits.iter().map(|t| format!("{:?}", t)).collect(),
+        role: map_tactical_role(role),
     }
+}
+
+fn map_tactical_role(role: DomainTacticalRole) -> TacticalRole {
+    match role {
+        DomainTacticalRole::Goalkeeper => TacticalRole::Goalkeeper,
+        DomainTacticalRole::SweeperKeeper => TacticalRole::SweeperKeeper,
+        DomainTacticalRole::CenterBackStopper => TacticalRole::CenterBackStopper,
+        DomainTacticalRole::CenterBackCover => TacticalRole::CenterBackCover,
+        DomainTacticalRole::CenterBackPlaymaker => TacticalRole::CenterBackPlaymaker,
+        DomainTacticalRole::FullBackSupport => TacticalRole::FullBackSupport,
+        DomainTacticalRole::WingBackAttack => TacticalRole::WingBackAttack,
+        DomainTacticalRole::HoldingMidfielder => TacticalRole::HoldingMidfielder,
+        DomainTacticalRole::DeepPlaymaker => TacticalRole::DeepPlaymaker,
+        DomainTacticalRole::BoxToBoxMidfielder => TacticalRole::BoxToBoxMidfielder,
+        DomainTacticalRole::AdvancedPlaymaker => TacticalRole::AdvancedPlaymaker,
+        DomainTacticalRole::WideProgressor => TacticalRole::WideProgressor,
+        DomainTacticalRole::Poacher => TacticalRole::Poacher,
+        DomainTacticalRole::TargetForward => TacticalRole::TargetForward,
+        DomainTacticalRole::ChannelRunner => TacticalRole::ChannelRunner,
+        DomainTacticalRole::LinkForward => TacticalRole::LinkForward,
+    }
+}
+
+fn default_role_for_slot(position: &domain::player::Position) -> DomainTacticalRole {
+    match position {
+        DomainPosition::Goalkeeper => DomainTacticalRole::Goalkeeper,
+        DomainPosition::LeftBack | DomainPosition::RightBack => DomainTacticalRole::FullBackSupport,
+        DomainPosition::LeftWingBack | DomainPosition::RightWingBack => {
+            DomainTacticalRole::WingBackAttack
+        }
+        DomainPosition::CenterBack | DomainPosition::Defender => {
+            DomainTacticalRole::CenterBackStopper
+        }
+        DomainPosition::DefensiveMidfielder => DomainTacticalRole::HoldingMidfielder,
+        DomainPosition::AttackingMidfielder => DomainTacticalRole::AdvancedPlaymaker,
+        DomainPosition::LeftMidfielder | DomainPosition::RightMidfielder => {
+            DomainTacticalRole::WideProgressor
+        }
+        DomainPosition::CentralMidfielder | DomainPosition::Midfielder => {
+            DomainTacticalRole::BoxToBoxMidfielder
+        }
+        DomainPosition::LeftWinger | DomainPosition::RightWinger => {
+            DomainTacticalRole::ChannelRunner
+        }
+        DomainPosition::Striker | DomainPosition::Forward => DomainTacticalRole::Poacher,
+    }
+}
+
+fn default_role_for_position(position: &domain::player::Position) -> DomainTacticalRole {
+    default_role_for_slot(position)
 }
 
 /// Auto-select set-piece takers from a set of player IDs.

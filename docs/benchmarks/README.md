@@ -41,7 +41,7 @@ Default scenario:
 - home/away balancing for every unordered tactic pair
 - `6` supported shapes by current engine interpretation
 - `6` play styles
-- equal-quality role-specific archetype squads
+- equal-quality role-specific synthetic squads
 
 Run it:
 
@@ -61,33 +61,8 @@ Run a larger lower-variance sample:
 bash scripts/render-tactic-matrix-benchmark.sh --matches-per-leg 50 --allow-dirty
 ```
 
-## Archetype Tactic Matrix Benchmark
-
-`benchmark:engine:archetypes` runs an archetype-aware tactic-template matrix and writes artifacts under `docs/benchmarks`:
-
-- `engine-archetype-tactic-matrix.json`
-- `engine-archetype-tactic-rankings.md`
-- `engine-archetype-tactic-matchups.md`
-
-Default scenario:
-
-- `50` matches per leg
-- home/away balancing for every unordered template pair
-- benchmark-only player archetypes such as `BallPlayingCb`, `Regista`, `BoxToBox`, `TargetMan`, and `CreatorForward`
-- squad-type summaries that show which player mixes each tactic thrives with or struggles against
-
-Run it:
-
-```bash
-npm run benchmark:engine:archetypes
-```
-
-Run a larger sample:
-
-```bash
-bash scripts/render-archetype-tactic-matrix-benchmark.sh --matches-per-leg 100 --allow-dirty
-```
-
 Roadmap:
 
 - [engine-balance-roadmap.md](/home/quackson/Desktop/Coding/openfootmanager/docs/benchmarks/engine-balance-roadmap.md)
+- [engine-traits-players.md](/home/quackson/Desktop/Coding/openfootmanager/docs/benchmarks/engine-traits-players.md)
+- [engine-trait-action-phases.md](/home/quackson/Desktop/Coding/openfootmanager/docs/benchmarks/engine-trait-action-phases.md)

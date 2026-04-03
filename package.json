@@ -11,7 +11,6 @@
     "test:watch": "vitest",
     "benchmark:engine:record": "bash scripts/record-engine-benchmark.sh",
     "benchmark:engine:tactics": "bash scripts/render-tactic-matrix-benchmark.sh",
-    "benchmark:engine:archetypes": "bash scripts/render-archetype-tactic-matrix-benchmark.sh",
     "tauri": "tauri"
   },
   "dependencies": {

@@ -54,8 +54,10 @@ impl LiveMatchState {
             .position(|p| p.id == player_on_id)
             .ok_or("Player not on bench")?;
 
-        let player_on = bench.remove(on_idx);
+        let mut player_on = bench.remove(on_idx);
         let player_off = self.team_mut(side).players.remove(off_idx);
+        player_on.position = player_off.position;
+        player_on.role = player_off.role;
 
         // Initialize condition for incoming player
         self.player_conditions
@@ -119,8 +121,10 @@ impl LiveMatchState {
             .position(|p| p.id == player_on_id)
             .ok_or("Player not on bench")?;
 
-        let player_on = bench.remove(on_idx);
+        let mut player_on = bench.remove(on_idx);
         let player_off = self.team_mut(side).players.remove(off_idx);
+        player_on.position = player_off.position;
+        player_on.role = player_off.role;
 
         // Initialize condition for incoming player
         self.player_conditions
@@ -196,6 +200,7 @@ impl LiveMatchState {
                 continue;
             };
             team.players[idx].position = new_pos;
+            team.players[idx].role = crate::types::TacticalRole::default_for_position(new_pos);
         }
     }
 }

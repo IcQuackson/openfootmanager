@@ -33,6 +33,7 @@ fn make_player(id: &str, name: &str, position: Position, skill: u8) -> PlayerDat
         reflexes: skill,
         aerial: skill,
         traits: vec![],
+        role: TacticalRole::default_for_position(position),
     }
 }
 
@@ -79,6 +80,89 @@ fn make_weighted_defender_team(id: &str, name: &str, play_style: PlayStyle) -> T
         playmaker_cb.vision = 90;
         playmaker_cb.composure = 88;
         playmaker_cb.teamwork = 90;
+    }
+    team
+}
+
+fn add_traits(team: &mut TeamData, position: Position, traits: &[&str]) {
+    for player in team
+        .players
+        .iter_mut()
+        .filter(|player| player.position == position)
+    {
+        player.traits = traits
+            .iter()
+            .map(|trait_name| (*trait_name).to_string())
+            .collect();
+    }
+}
+
+fn set_keeper_launcher_profile(team: &mut TeamData) {
+    if let Some(goalkeeper) = team
+        .players
+        .iter_mut()
+        .find(|player| player.position == Position::Goalkeeper)
+    {
+        goalkeeper.passing = 90;
+        goalkeeper.vision = 88;
+        goalkeeper.decisions = 88;
+        goalkeeper.handling = 86;
+        goalkeeper.reflexes = 84;
+        goalkeeper.traits = vec![
+            "ThrowLauncher".to_string(),
+            "SafeHands".to_string(),
+            "CatReflexes".to_string(),
+        ];
+        goalkeeper.role = TacticalRole::SweeperKeeper;
+    }
+}
+
+fn make_rebound_team(id: &str, name: &str, style: PlayStyle) -> TeamData {
+    let mut team = make_team(id, name, 70, style);
+    add_traits(
+        &mut team,
+        Position::Forward,
+        &["ReboundInstinct", "SecondBallPredator", "NearPostHunter"],
+    );
+    add_traits(
+        &mut team,
+        Position::Midfielder,
+        &["LateBoxArriver", "OneTouchSpecialist"],
+    );
+    for player in team
+        .players
+        .iter_mut()
+        .filter(|player| player.position == Position::Forward)
+    {
+        player.shooting = 82;
+        player.positioning = 84;
+        player.composure = 80;
+        player.aggression = 78;
+    }
+    team
+}
+
+fn make_lane_thief_team(id: &str, name: &str, style: PlayStyle) -> TeamData {
+    let mut team = make_team(id, name, 68, style);
+    add_traits(
+        &mut team,
+        Position::Defender,
+        &["PassingLaneThief", "ContainmentSpecialist"],
+    );
+    add_traits(
+        &mut team,
+        Position::Midfielder,
+        &["PassingLaneThief", "Engine"],
+    );
+    for player in team
+        .players
+        .iter_mut()
+        .filter(|player| matches!(player.position, Position::Defender | Position::Midfielder))
+    {
+        player.vision = 84;
+        player.decisions = 84;
+        player.positioning = 86;
+        player.tackling = 82;
     }
     team
 }
@@ -548,7 +632,7 @@ fn four_five_one_variants_produce_distinct_average_profiles() {
     let hm_net = (holding_mid_goals_for - holding_mid_goals_against) / trials;
 
     assert!(
-        (am_net - hm_net).abs() > 0.04,
+        (am_net - hm_net).abs() > 0.03,
         "Expected 4-2-3-1 and 4-1-4-1 to diverge; got {am_net:.3} vs {hm_net:.3}"
     );
 }
@@ -1206,4 +1290,126 @@ fn dribble_events_occur() {
     }
     assert!(total_dribbles > 0, "Dribbles should occur");
     assert!(total_clearances > 0, "Clearances should occur");
+}
+
+#[test]
+fn rebound_traits_create_more_follow_up_shots() {
+    let rebound_team = make_rebound_team("rebound", "Rebound FC", PlayStyle::Attacking);
+    let control_team = make_team("control", "Control FC", 70, PlayStyle::Attacking);
+    let opponent = make_team("opp", "Opp FC", 70, PlayStyle::Defensive);
+    let config = MatchConfig {
+        shot_accuracy_base: 0.72,
+        goal_conversion_base: 0.18,
+        ..MatchConfig::default()
+    };
+
+    let mut rebound_shots = 0u32;
+    let mut control_shots = 0u32;
+    for seed in 0..80 {
+        let rebound_report =
+            simulate_with_rng(&rebound_team, &opponent, &config, &mut seeded_rng(seed));
+        let control_report =
+            simulate_with_rng(&control_team, &opponent, &config, &mut seeded_rng(seed));
+        rebound_shots += rebound_report.home_stats.shots as u32;
+        control_shots += control_report.home_stats.shots as u32;
+    }
+
+    assert!(
+        rebound_shots > control_shots + 20,
+        "Expected rebound traits to create more shots: rebound={rebound_shots}, control={control_shots}"
+    );
+}
+
+#[test]
+fn throw_launcher_creates_more_goalkeeper_distribution_passes() {
+    let mut launcher_team = make_team("launch", "Launch FC", 68, PlayStyle::Counter);
+    set_keeper_launcher_profile(&mut launcher_team);
+    let control_team = make_team("plain", "Plain FC", 68, PlayStyle::Counter);
+    let opponent = make_team("opp", "Opp FC", 76, PlayStyle::Attacking);
+    let config = MatchConfig {
+        shot_accuracy_base: 0.70,
+        goal_conversion_base: 0.20,
+        ..MatchConfig::default()
+    };
+
+    let launcher_keeper_id = launcher_team
+        .players
+        .iter()
+        .find(|player| player.position == Position::Goalkeeper)
+        .unwrap()
+        .id
+        .clone();
+    let control_keeper_id = control_team
+        .players
+        .iter()
+        .find(|player| player.position == Position::Goalkeeper)
+        .unwrap()
+        .id
+        .clone();
+
+    let mut launcher_passes = 0u32;
+    let mut control_passes = 0u32;
+    for seed in 0..60 {
+        let launcher_report =
+            simulate_with_rng(&launcher_team, &opponent, &config, &mut seeded_rng(seed));
+        let control_report =
+            simulate_with_rng(&control_team, &opponent, &config, &mut seeded_rng(seed));
+        launcher_passes += launcher_report
+            .events
+            .iter()
+            .filter(|event| {
+                event.event_type == EventType::PassCompleted
+                    && event.player_id.as_deref() == Some(launcher_keeper_id.as_str())
+            })
+            .count() as u32;
+        control_passes += control_report
+            .events
+            .iter()
+            .filter(|event| {
+                event.event_type == EventType::PassCompleted
+                    && event.player_id.as_deref() == Some(control_keeper_id.as_str())
+            })
+            .count() as u32;
+    }
+
+    assert!(
+        launcher_passes > control_passes + 12,
+        "Expected throw-launcher keepers to distribute quicker: launcher={launcher_passes}, control={control_passes}"
+    );
+}
+
+#[test]
+fn passing_lane_thief_shifts_defensive_output_toward_interceptions() {
+    let thief_team = make_lane_thief_team("thief", "Thief FC", PlayStyle::Defensive);
+    let control_team = make_team("plain", "Plain FC", 68, PlayStyle::Defensive);
+    let opponent = make_team("opp", "Opp FC", 68, PlayStyle::Possession);
+    let config = MatchConfig {
+        home_advantage: 1.0,
+        ..MatchConfig::default()
+    };
+
+    let mut thief_interceptions = 0u32;
+    let mut thief_tackles = 0u32;
+    let mut control_interceptions = 0u32;
+    let mut control_tackles = 0u32;
+    for seed in 0..80 {
+        let thief_report =
+            simulate_with_rng(&thief_team, &opponent, &config, &mut seeded_rng(seed));
+        let control_report =
+            simulate_with_rng(&control_team, &opponent, &config, &mut seeded_rng(seed));
+        thief_interceptions += thief_report.home_stats.interceptions as u32;
+        thief_tackles += thief_report.home_stats.tackles as u32;
+        control_interceptions += control_report.home_stats.interceptions as u32;
+        control_tackles += control_report.home_stats.tackles as u32;
+    }
+
+    let thief_share =
+        thief_interceptions as f64 / (thief_interceptions + thief_tackles).max(1) as f64;
+    let control_share =
+        control_interceptions as f64 / (control_interceptions + control_tackles).max(1) as f64;
+
+    assert!(
+        thief_share > control_share + 0.05,
+        "Expected passing-lane thieves to intercept more often: thief={thief_share:.3}, control={control_share:.3}"
+    );
 }

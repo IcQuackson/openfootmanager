@@ -1,6 +1,7 @@
 use log::info;
 use tauri::State;
 
+use domain::team::default_tactical_roles_for_formation;
 use ofm_core::game::Game;
 use ofm_core::state::StateManager;
 
@@ -30,6 +31,7 @@ pub fn set_formation(state: State<'_, StateManager>, formation: String) -> Resul
 
     if let Some(team) = game.teams.iter_mut().find(|t| t.id == team_id) {
         team.formation = formation;
+        team.tactical_roles = default_tactical_roles_for_formation(&team.formation);
     }
 
     // Reassign positions for outfield players on this team

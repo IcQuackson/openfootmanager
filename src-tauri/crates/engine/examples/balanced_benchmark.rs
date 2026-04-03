@@ -1,4 +1,6 @@
-use engine::{MatchConfig, PlayStyle, PlayerData, Position, TeamData, simulate_with_rng};
+use engine::{
+    MatchConfig, PlayStyle, PlayerData, Position, TacticalRole, TeamData, simulate_with_rng,
+};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use serde::Serialize;
@@ -210,5 +212,6 @@ fn make_player(id: &str, name: &str, position: Position, skill: u8) -> PlayerDat
         reflexes: skill,
         aerial: skill,
         traits: vec![],
+        role: TacticalRole::default_for_position(position),
     }
 }

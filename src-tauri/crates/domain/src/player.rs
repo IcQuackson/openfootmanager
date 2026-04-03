@@ -420,11 +420,79 @@ pub enum PlayerTrait {
     CompleteForward, // FWD: shooting >= 75 && dribbling >= 75 && pace >= 70 && strength >= 70
     Engine,          // MID: stamina >= 85 && pace >= 70 && teamwork >= 75
     SetPieceSpecialist, // passing >= 80 && shooting >= 75 && vision >= 75
+    // Perceptual / cognitive
+    EarlyScanner,
+    BlindSideAwareness,
+    TempoManipulator,
+    DelayedPasser,
+    RiskCalibrator,
+    SpaceMagnet,
+    PressBaiter,
+    TransitionAnticipator,
+    // Technical micro-traits
+    OneTouchSpecialist,
+    ToePokeFinisher,
+    OutsideFootPasser,
+    DisguisedFirstTouch,
+    BounceTechnician,
+    AerialRedirection,
+    HalfVolleyComfort,
+    RecoveryTouch,
+    // Movement / off-ball
+    LateBoxArriver,
+    NearPostHunter,
+    BlindSideRunner,
+    DecoyMover,
+    SecondBallPredator,
+    StaticLure,
+    ChannelDrifter,
+    FarPostGhost,
+    ReboundInstinct,
+    // Defensive / duel
+    ContainmentSpecialist,
+    RecoverySprinter,
+    PassingLaneThief,
+    BodyAngleManipulator,
+    TacticalFouler,
+    AerialGrappler,
+    SecondContactWinner,
+    // Psychological / competitive
+    BigMatchRiser,
+    BigMatchShrinker,
+    MomentumPlayer,
+    ErrorImmunity,
+    CrowdReactive,
+    Provocable,
+    RefereeManipulator,
+    PainMasker,
+    StatusSensitive,
+    ClutchExecutor,
+    // Dark arts / matchcraft
+    ContactSeller,
+    ShieldAddict,
+    LineStepTrapper,
+    QuickRestartOpportunist,
+    TimeKiller,
+    ChaosCreator,
+    NutmegOpportunist,
+    BounceRoomDribbler,
+    KeeperDisruptor,
+    // Goalkeeper-specific
+    ReboundDirector,
+    CrossPoker,
+    BreakawayHypnotist,
+    LineDictator,
+    ThrowLauncher,
+    PenaltyReader,
+    TrafficCommander,
 }
 
-/// Derive traits purely from a player's attributes (position-independent).
-pub fn compute_traits(attrs: &PlayerAttributes, _position: &Position) -> Vec<PlayerTrait> {
+/// Derive engine-facing traits from a player's attributes and natural role context.
+pub fn compute_traits(attrs: &PlayerAttributes, position: &Position) -> Vec<PlayerTrait> {
     let mut traits = Vec::new();
+    let grouped_position = position.to_group_position();
+    let is_midfielder = grouped_position == Position::Midfielder;
+    let is_forward = grouped_position == Position::Forward;
 
     // Physical
     if attrs.pace >= 85 {
@@ -496,6 +564,201 @@ pub fn compute_traits(attrs: &PlayerAttributes, _position: &Position) -> Vec<Pla
         traits.push(PlayerTrait::SetPieceSpecialist);
     }
 
+    // Perceptual / cognitive
+    if attrs.vision >= 82 && attrs.decisions >= 80 && attrs.composure >= 75 {
+        traits.push(PlayerTrait::EarlyScanner);
+    }
+    if attrs.positioning >= 84 && attrs.decisions >= 80 {
+        traits.push(PlayerTrait::BlindSideAwareness);
+    }
+    if attrs.passing >= 82 && attrs.decisions >= 82 && attrs.composure >= 78 {
+        traits.push(PlayerTrait::TempoManipulator);
+    }
+    if attrs.passing >= 80 && attrs.vision >= 84 && attrs.composure >= 80 {
+        traits.push(PlayerTrait::DelayedPasser);
+    }
+    if attrs.decisions >= 85 && attrs.composure >= 78 && attrs.vision >= 75 {
+        traits.push(PlayerTrait::RiskCalibrator);
+    }
+    if attrs.positioning >= 84 && attrs.vision >= 78 && attrs.agility >= 72 {
+        traits.push(PlayerTrait::SpaceMagnet);
+    }
+    if attrs.composure >= 82 && attrs.passing >= 76 && attrs.strength >= 68 {
+        traits.push(PlayerTrait::PressBaiter);
+    }
+    if attrs.positioning >= 80 && attrs.pace >= 78 && attrs.decisions >= 76 {
+        traits.push(PlayerTrait::TransitionAnticipator);
+    }
+
+    // Technical micro-traits
+    if attrs.passing >= 80 && attrs.vision >= 78 && attrs.composure >= 74 {
+        traits.push(PlayerTrait::OneTouchSpecialist);
+    }
+    if attrs.shooting >= 82 && attrs.agility >= 70 && attrs.composure >= 70 {
+        traits.push(PlayerTrait::ToePokeFinisher);
+    }
+    if attrs.passing >= 83 && attrs.dribbling >= 74 {
+        traits.push(PlayerTrait::OutsideFootPasser);
+    }
+    if attrs.dribbling >= 84 && attrs.agility >= 80 && attrs.composure >= 75 {
+        traits.push(PlayerTrait::DisguisedFirstTouch);
+    }
+    if attrs.agility >= 78 && attrs.composure >= 72 && attrs.strength >= 68 {
+        traits.push(PlayerTrait::BounceTechnician);
+    }
+    if attrs.aerial >= 80 && attrs.positioning >= 76 && attrs.shooting >= 68 {
+        traits.push(PlayerTrait::AerialRedirection);
+    }
+    if attrs.shooting >= 82 && attrs.agility >= 72 && attrs.composure >= 74 {
+        traits.push(PlayerTrait::HalfVolleyComfort);
+    }
+    if attrs.dribbling >= 78 && attrs.agility >= 76 && attrs.composure >= 70 {
+        traits.push(PlayerTrait::RecoveryTouch);
+    }
+
+    // Movement / off-ball
+    if is_midfielder && attrs.positioning >= 80 && attrs.stamina >= 76 && attrs.shooting >= 68 {
+        traits.push(PlayerTrait::LateBoxArriver);
+    }
+    if is_forward && attrs.positioning >= 80 && attrs.pace >= 76 {
+        traits.push(PlayerTrait::NearPostHunter);
+    }
+    if is_forward && attrs.pace >= 82 && attrs.positioning >= 80 {
+        traits.push(PlayerTrait::BlindSideRunner);
+    }
+    if attrs.teamwork >= 82 && attrs.positioning >= 78 && attrs.decisions >= 76 {
+        traits.push(PlayerTrait::DecoyMover);
+    }
+    if attrs.positioning >= 80 && attrs.aggression >= 72 && attrs.strength >= 70 {
+        traits.push(PlayerTrait::SecondBallPredator);
+    }
+    if attrs.composure >= 80 && attrs.positioning >= 82 && attrs.decisions >= 78 {
+        traits.push(PlayerTrait::StaticLure);
+    }
+    if attrs.dribbling >= 80 && attrs.positioning >= 76 && attrs.pace >= 76 {
+        traits.push(PlayerTrait::ChannelDrifter);
+    }
+    if is_forward && attrs.positioning >= 82 && attrs.composure >= 74 {
+        traits.push(PlayerTrait::FarPostGhost);
+    }
+    if (is_forward || is_midfielder)
+        && attrs.positioning >= 80
+        && attrs.shooting >= 74
+        && attrs.aggression >= 68
+    {
+        traits.push(PlayerTrait::ReboundInstinct);
+    }
+
+    // Defensive / duel
+    if attrs.defending >= 78 && attrs.positioning >= 82 && attrs.decisions >= 76 {
+        traits.push(PlayerTrait::ContainmentSpecialist);
+    }
+    if attrs.pace >= 82 && attrs.defending >= 72 && attrs.composure >= 72 {
+        traits.push(PlayerTrait::RecoverySprinter);
+    }
+    if attrs.tackling >= 76 && attrs.vision >= 78 && attrs.decisions >= 78 {
+        traits.push(PlayerTrait::PassingLaneThief);
+    }
+    if attrs.defending >= 76 && attrs.positioning >= 80 && attrs.composure >= 74 {
+        traits.push(PlayerTrait::BodyAngleManipulator);
+    }
+    if attrs.aggression >= 78 && attrs.tackling >= 75 && attrs.decisions >= 72 {
+        traits.push(PlayerTrait::TacticalFouler);
+    }
+    if attrs.aerial >= 82 && attrs.strength >= 78 {
+        traits.push(PlayerTrait::AerialGrappler);
+    }
+    if attrs.strength >= 74 && attrs.aggression >= 72 && attrs.agility >= 68 {
+        traits.push(PlayerTrait::SecondContactWinner);
+    }
+
+    // Psychological / competitive
+    if attrs.leadership >= 82 && attrs.composure >= 80 {
+        traits.push(PlayerTrait::BigMatchRiser);
+    }
+    if attrs.composure <= 42 && attrs.decisions <= 48 {
+        traits.push(PlayerTrait::BigMatchShrinker);
+    }
+    if attrs.aggression >= 76 && (45..=70).contains(&attrs.composure) {
+        traits.push(PlayerTrait::MomentumPlayer);
+    }
+    if attrs.composure >= 84 && attrs.decisions >= 80 {
+        traits.push(PlayerTrait::ErrorImmunity);
+    }
+    if attrs.leadership <= 45 && attrs.aggression >= 70 {
+        traits.push(PlayerTrait::CrowdReactive);
+    }
+    if attrs.aggression >= 82 && attrs.composure <= 58 {
+        traits.push(PlayerTrait::Provocable);
+    }
+    if attrs.decisions >= 80 && attrs.composure >= 78 && (45..=75).contains(&attrs.aggression) {
+        traits.push(PlayerTrait::RefereeManipulator);
+    }
+    if attrs.stamina >= 84 && attrs.strength >= 76 && attrs.composure >= 72 {
+        traits.push(PlayerTrait::PainMasker);
+    }
+    if attrs.leadership >= 82 && attrs.teamwork >= 70 {
+        traits.push(PlayerTrait::StatusSensitive);
+    }
+    if attrs.composure >= 86
+        && attrs.decisions >= 82
+        && (attrs.shooting >= 74 || attrs.passing >= 78)
+    {
+        traits.push(PlayerTrait::ClutchExecutor);
+    }
+
+    // Dark arts / matchcraft
+    if attrs.agility >= 78 && attrs.dribbling >= 74 && attrs.composure >= 72 {
+        traits.push(PlayerTrait::ContactSeller);
+    }
+    if attrs.strength >= 80 && attrs.composure >= 74 && attrs.teamwork >= 68 {
+        traits.push(PlayerTrait::ShieldAddict);
+    }
+    if attrs.positioning >= 82 && attrs.decisions >= 80 {
+        traits.push(PlayerTrait::LineStepTrapper);
+    }
+    if attrs.decisions >= 82 && attrs.pace >= 74 && attrs.vision >= 72 {
+        traits.push(PlayerTrait::QuickRestartOpportunist);
+    }
+    if attrs.composure >= 82 && attrs.teamwork >= 70 && attrs.strength >= 68 {
+        traits.push(PlayerTrait::TimeKiller);
+    }
+    if attrs.dribbling >= 80 && attrs.aggression >= 76 && attrs.decisions >= 70 {
+        traits.push(PlayerTrait::ChaosCreator);
+    }
+    if attrs.dribbling >= 84 && attrs.agility >= 80 && attrs.composure >= 70 {
+        traits.push(PlayerTrait::NutmegOpportunist);
+    }
+    if attrs.dribbling >= 80 && attrs.agility >= 76 && attrs.strength >= 68 {
+        traits.push(PlayerTrait::BounceRoomDribbler);
+    }
+    if is_forward && attrs.strength >= 74 && attrs.positioning >= 78 && attrs.aggression >= 68 {
+        traits.push(PlayerTrait::KeeperDisruptor);
+    }
+
+    // Goalkeeper-specific
+    if attrs.handling >= 82 && attrs.reflexes >= 78 && attrs.decisions >= 78 {
+        traits.push(PlayerTrait::ReboundDirector);
+    }
+    if attrs.aerial >= 82 && attrs.strength >= 74 && attrs.aggression >= 68 {
+        traits.push(PlayerTrait::CrossPoker);
+    }
+    if attrs.reflexes >= 84 && attrs.composure >= 76 && attrs.positioning >= 80 {
+        traits.push(PlayerTrait::BreakawayHypnotist);
+    }
+    if attrs.leadership >= 80 && attrs.positioning >= 82 && attrs.decisions >= 80 {
+        traits.push(PlayerTrait::LineDictator);
+    }
+    if attrs.passing >= 78 && attrs.vision >= 76 && attrs.decisions >= 74 {
+        traits.push(PlayerTrait::ThrowLauncher);
+    }
+    if attrs.reflexes >= 82 && attrs.decisions >= 80 && attrs.composure >= 74 {
+        traits.push(PlayerTrait::PenaltyReader);
+    }
+    if attrs.aerial >= 80 && attrs.positioning >= 80 && attrs.leadership >= 76 {
+        traits.push(PlayerTrait::TrafficCommander);
+    }
+
     traits
 }
 
@@ -540,6 +803,19 @@ impl Player {
             transfer_offers: Vec::new(),
             morale_core: PlayerMoraleCore::default(),
         }
+    }
+
+    pub fn repair_missing_traits(&mut self) -> bool {
+        if !self.traits.is_empty() {
+            return false;
+        }
+        let position = if self.natural_position.is_legacy_bucket() {
+            self.position.clone()
+        } else {
+            self.natural_position.clone()
+        };
+        self.traits = compute_traits(&self.attributes, &position);
+        true
     }
 }
 
@@ -629,5 +905,28 @@ mod tests {
         assert_eq!(player.footedness, Footedness::Right);
         assert_eq!(player.weak_foot, 2);
         assert_eq!(player.natural_position, Position::Midfielder);
+    }
+
+    #[test]
+    fn compute_traits_assigns_new_cognitive_and_duel_traits() {
+        let mut attrs = sample_attributes();
+        attrs.passing = 90;
+        attrs.vision = 92;
+        attrs.decisions = 85;
+        attrs.composure = 84;
+        attrs.positioning = 86;
+        attrs.tackling = 82;
+        attrs.aggression = 79;
+        attrs.defending = 80;
+        attrs.aerial = 84;
+        attrs.strength = 80;
+
+        let traits = compute_traits(&attrs, &Position::CentralMidfielder);
+
+        assert!(traits.contains(&PlayerTrait::EarlyScanner));
+        assert!(traits.contains(&PlayerTrait::RiskCalibrator));
+        assert!(traits.contains(&PlayerTrait::OneTouchSpecialist));
+        assert!(traits.contains(&PlayerTrait::PassingLaneThief));
+        assert!(traits.contains(&PlayerTrait::AerialGrappler));
     }
 }

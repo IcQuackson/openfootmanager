@@ -1,6 +1,6 @@
 use domain::team::{
-    Facilities, FinancialTransaction, PlayStyle, Sponsorship, Team, TeamColors, TrainingFocus,
-    TrainingIntensity, TrainingSchedule,
+    Facilities, FinancialTransaction, PlayStyle, Sponsorship, TacticalRole, Team, TeamColors,
+    TrainingFocus, TrainingIntensity, TrainingSchedule,
 };
 use rusqlite::{Connection, params};
 
@@ -15,6 +15,8 @@ pub fn upsert_team(conn: &Connection, t: &Team) -> Result<(), String> {
         serde_json::to_string(&t.training_groups).map_err(|e| format!("JSON error: {}", e))?;
     let match_roles_json =
         serde_json::to_string(&t.match_roles).map_err(|e| format!("JSON error: {}", e))?;
+    let tactical_roles_json =
+        serde_json::to_string(&t.tactical_roles).map_err(|e| format!("JSON error: {}", e))?;
     let financial_ledger_json =
         serde_json::to_string(&t.financial_ledger).map_err(|e| format!("JSON error: {}", e))?;
     let sponsorship_json =
@@ -33,8 +35,8 @@ pub fn upsert_team(conn: &Connection, t: &Team) -> Result<(), String> {
          season_income, season_expenses, formation, play_style,
          training_focus, training_intensity, training_schedule,
          founded_year, colors_primary, colors_secondary,
-         starting_xi_ids, match_roles, form, history, training_groups, financial_ledger, sponsorship, facilities)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)",
+         starting_xi_ids, match_roles, tactical_roles, form, history, training_groups, financial_ledger, sponsorship, facilities)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31)",
         params![
             t.id,
             t.name,
@@ -60,6 +62,7 @@ pub fn upsert_team(conn: &Connection, t: &Team) -> Result<(), String> {
             t.colors.secondary,
             starting_xi_json,
             match_roles_json,
+            tactical_roles_json,
             form_json,
             history_json,
             training_groups_json,
@@ -121,12 +124,13 @@ fn parse_training_schedule(s: &str) -> TrainingSchedule {
 fn row_to_team(row: &rusqlite::Row) -> rusqlite::Result<Team> {
     let starting_xi_json: String = row.get(22)?;
     let match_roles_json: String = row.get(23)?;
-    let form_json: String = row.get(24)?;
-    let history_json: String = row.get(25)?;
-    let training_groups_json: String = row.get(26)?;
-    let financial_ledger_json: String = row.get(27)?;
-    let sponsorship_json: String = row.get(28)?;
-    let facilities_json: String = row.get(29)?;
+    let tactical_roles_json: String = row.get(24)?;
+    let form_json: String = row.get(25)?;
+    let history_json: String = row.get(26)?;
+    let training_groups_json: String = row.get(27)?;
+    let financial_ledger_json: String = row.get(28)?;
+    let sponsorship_json: String = row.get(29)?;
+    let facilities_json: String = row.get(30)?;
     let play_style_str: String = row.get(15)?;
     let training_focus_str: String = row.get(16)?;
     let training_intensity_str: String = row.get(17)?;
@@ -165,6 +169,8 @@ fn row_to_team(row: &rusqlite::Row) -> rusqlite::Result<Team> {
         },
         starting_xi_ids: serde_json::from_str(&starting_xi_json).unwrap_or_default(),
         match_roles: serde_json::from_str(&match_roles_json).unwrap_or_default(),
+        tactical_roles: serde_json::from_str::<Vec<TacticalRole>>(&tactical_roles_json)
+            .unwrap_or_default(),
         form: serde_json::from_str(&form_json).unwrap_or_default(),
         history: serde_json::from_str(&history_json).unwrap_or_default(),
     })
@@ -179,7 +185,7 @@ pub fn load_all_teams(conn: &Connection) -> Result<Vec<Team>, String> {
                     season_income, season_expenses, formation, play_style,
                     training_focus, training_intensity, training_schedule,
                     founded_year, colors_primary, colors_secondary,
-                    starting_xi_ids, match_roles, form, history, training_groups, financial_ledger, sponsorship, facilities
+                    starting_xi_ids, match_roles, tactical_roles, form, history, training_groups, financial_ledger, sponsorship, facilities
              FROM teams",
         )
         .map_err(|e| format!("Failed to prepare teams query: {}", e))?;
@@ -204,7 +210,7 @@ pub fn load_team(conn: &Connection, id: &str) -> Result<Option<Team>, String> {
                     season_income, season_expenses, formation, play_style,
                     training_focus, training_intensity, training_schedule,
                     founded_year, colors_primary, colors_secondary,
-                    starting_xi_ids, match_roles, form, history, training_groups, financial_ledger, sponsorship, facilities
+                    starting_xi_ids, match_roles, tactical_roles, form, history, training_groups, financial_ledger, sponsorship, facilities
              FROM teams WHERE id = ?1",
         )
         .map_err(|e| format!("Failed to prepare team query: {}", e))?;

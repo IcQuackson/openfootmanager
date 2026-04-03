@@ -61,6 +61,7 @@ export interface TeamData {
   sponsorship?: SponsorshipData | null;
   starting_xi_ids: string[];
   match_roles?: TeamMatchRolesData;
+  tactical_roles?: string[];
   form: string[];
   history: TeamSeasonRecord[];
 }

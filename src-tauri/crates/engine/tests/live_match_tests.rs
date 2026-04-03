@@ -38,6 +38,7 @@ fn make_player(id: &str, name: &str, pos: Position, skill: u8) -> PlayerData {
         reflexes: skill,
         aerial: skill,
         traits: vec![],
+        role: TacticalRole::default_for_position(pos),
     }
 }
 
@@ -97,6 +98,64 @@ fn make_bench(id: &str, skill: u8) -> Vec<PlayerData> {
             skill,
         ),
     ]
+}
+
+fn add_traits(team: &mut TeamData, position: Position, traits: &[&str]) {
+    for player in team
+        .players
+        .iter_mut()
+        .filter(|player| player.position == position)
+    {
+        player.traits = traits
+            .iter()
+            .map(|trait_name| (*trait_name).to_string())
+            .collect();
+    }
+}
+
+fn set_keeper_launcher_profile(team: &mut TeamData) {
+    if let Some(goalkeeper) = team
+        .players
+        .iter_mut()
+        .find(|player| player.position == Position::Goalkeeper)
+    {
+        goalkeeper.passing = 90;
+        goalkeeper.vision = 88;
+        goalkeeper.decisions = 88;
+        goalkeeper.handling = 86;
+        goalkeeper.reflexes = 84;
+        goalkeeper.traits = vec![
+            "ThrowLauncher".to_string(),
+            "SafeHands".to_string(),
+            "CatReflexes".to_string(),
+        ];
+        goalkeeper.role = TacticalRole::SweeperKeeper;
+    }
+}
+
+fn make_rebound_team(id: &str, name: &str, style: PlayStyle) -> TeamData {
+    let mut team = make_team(id, name, 70, style);
+    add_traits(
+        &mut team,
+        Position::Forward,
+        &["ReboundInstinct", "SecondBallPredator", "NearPostHunter"],
+    );
+    add_traits(
+        &mut team,
+        Position::Midfielder,
+        &["LateBoxArriver", "OneTouchSpecialist"],
+    );
+    for player in team
+        .players
+        .iter_mut()
+        .filter(|player| player.position == Position::Forward)
+    {
+        player.shooting = 82;
+        player.positioning = 84;
+        player.composure = 80;
+        player.aggression = 78;
+    }
+    team
 }
 
 fn make_live_match(allows_extra_time: bool) -> LiveMatchState {
@@ -1231,6 +1290,7 @@ fn make_player_with_traits(
         reflexes: skill,
         aerial: skill,
         traits: traits.iter().map(|t| t.to_string()).collect(),
+        role: TacticalRole::default_for_position(pos),
     }
 }
 
@@ -1400,6 +1460,154 @@ fn hot_head_trait_increases_foul_likelihood() {
     assert!(
         fouls_with_hotheads >= fouls_without / 2,
         "HotHead team fouls: {fouls_with_hotheads}, normal: {fouls_without}"
+    );
+}
+
+#[test]
+fn rebound_traits_create_more_follow_up_shots_in_live_matches() {
+    let opponent = make_team("opp", "Opp FC", 70, PlayStyle::Defensive);
+    let config = MatchConfig {
+        shot_accuracy_base: 0.72,
+        goal_conversion_base: 0.18,
+        ..MatchConfig::default()
+    };
+
+    let mut rebound_shots = 0u32;
+    let mut control_shots = 0u32;
+    for seed in 0..25 {
+        let rebound_home = make_rebound_team("rebound", "Rebound FC", PlayStyle::Attacking);
+        let control_home = make_team("control", "Control FC", 70, PlayStyle::Attacking);
+
+        let mut rebound_state = LiveMatchState::new(
+            rebound_home,
+            opponent.clone(),
+            config.clone(),
+            make_bench("rebound", 65),
+            make_bench("opp", 65),
+            false,
+        );
+        let mut control_state = LiveMatchState::new(
+            control_home,
+            opponent.clone(),
+            config.clone(),
+            make_bench("control", 65),
+            make_bench("oppb", 65),
+            false,
+        );
+
+        run_to_finish(&mut rebound_state, &mut seeded_rng(seed));
+        run_to_finish(&mut control_state, &mut seeded_rng(seed));
+
+        let rebound_events = rebound_state.snapshot().events;
+        let control_events = control_state.snapshot().events;
+        rebound_shots += rebound_events
+            .iter()
+            .filter(|event| {
+                event.side == Side::Home
+                    && matches!(
+                        event.event_type,
+                        EventType::Goal
+                            | EventType::ShotSaved
+                            | EventType::ShotOffTarget
+                            | EventType::ShotBlocked
+                    )
+            })
+            .count() as u32;
+        control_shots += control_events
+            .iter()
+            .filter(|event| {
+                event.side == Side::Home
+                    && matches!(
+                        event.event_type,
+                        EventType::Goal
+                            | EventType::ShotSaved
+                            | EventType::ShotOffTarget
+                            | EventType::ShotBlocked
+                    )
+            })
+            .count() as u32;
+    }
+
+    assert!(
+        rebound_shots > control_shots + 8,
+        "Expected rebound traits to create more live-match shots: rebound={rebound_shots}, control={control_shots}"
+    );
+}
+
+#[test]
+fn throw_launcher_creates_keeper_distribution_events_in_live_matches() {
+    let opponent = make_team("opp", "Opp FC", 76, PlayStyle::Attacking);
+    let config = MatchConfig {
+        shot_accuracy_base: 0.70,
+        goal_conversion_base: 0.20,
+        ..MatchConfig::default()
+    };
+
+    let mut launcher_passes = 0u32;
+    let mut control_passes = 0u32;
+    for seed in 0..25 {
+        let mut launcher_home = make_team("launch", "Launch FC", 68, PlayStyle::Counter);
+        set_keeper_launcher_profile(&mut launcher_home);
+        let control_home = make_team("plain", "Plain FC", 68, PlayStyle::Counter);
+
+        let launcher_keeper_id = launcher_home
+            .players
+            .iter()
+            .find(|player| player.position == Position::Goalkeeper)
+            .unwrap()
+            .id
+            .clone();
+        let control_keeper_id = control_home
+            .players
+            .iter()
+            .find(|player| player.position == Position::Goalkeeper)
+            .unwrap()
+            .id
+            .clone();
+
+        let mut launcher_state = LiveMatchState::new(
+            launcher_home,
+            opponent.clone(),
+            config.clone(),
+            make_bench("launch", 65),
+            make_bench("opp", 65),
+            false,
+        );
+        let mut control_state = LiveMatchState::new(
+            control_home,
+            opponent.clone(),
+            config.clone(),
+            make_bench("plain", 65),
+            make_bench("oppc", 65),
+            false,
+        );
+
+        run_to_finish(&mut launcher_state, &mut seeded_rng(seed));
+        run_to_finish(&mut control_state, &mut seeded_rng(seed));
+
+        launcher_passes += launcher_state
+            .snapshot()
+            .events
+            .iter()
+            .filter(|event| {
+                event.event_type == EventType::PassCompleted
+                    && event.player_id.as_deref() == Some(launcher_keeper_id.as_str())
+            })
+            .count() as u32;
+        control_passes += control_state
+            .snapshot()
+            .events
+            .iter()
+            .filter(|event| {
+                event.event_type == EventType::PassCompleted
+                    && event.player_id.as_deref() == Some(control_keeper_id.as_str())
+            })
+            .count() as u32;
+    }
+
+    assert!(
+        launcher_passes > control_passes + 5,
+        "Expected throw-launcher keepers to produce more live distribution events: launcher={launcher_passes}, control={control_passes}"
     );
 }
 

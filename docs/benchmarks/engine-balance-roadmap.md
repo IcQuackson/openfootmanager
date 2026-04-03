@@ -170,28 +170,55 @@ Observed sample outcome after step 3:
 - `3-4-3` tactics now range from competitive to clearly viable instead of clustering in the bottom tier
 - the balanced benchmark stayed unchanged, which is expected because it uses equal `4-4-2` teams and this step only touched `3-4-3`
 
-### Fix 5: Archetype-aware benchmark analysis
+### Fix 5: Trait-aware role analysis
 
-The next benchmark phase should stop treating all defenders, midfielders, and forwards as interchangeable generic pieces.
+The next engine phase should stop treating all defenders, midfielders, and forwards as interchangeable generic pieces.
 
 Changes:
 
-- add benchmark-only player archetypes such as `BallPlayingCb`, `Stopper`, `Regista`, `Destroyer`, `BoxToBox`, `Poacher`, and `TargetMan`
-- define tactic templates as `shape + style + squad type` instead of just `shape + style`
-- generate matchup analysis that reports which opponent squad types each tactic template thrives against or struggles with
+- remove engine-side player archetypes
+- keep formation slot roles as the tactical instruction layer
+- use player traits from [engine-traits-players.md](/home/quackson/Desktop/Coding/openfootmanager/docs/benchmarks/engine-traits-players.md) to bias actor selection and event outcomes
+- refresh stored player traits from attributes during save-load repair and training updates
 
 Expected result:
 
-- benchmark reports become useful for squad-building and tactical fit questions
-- tactic analysis can explain why a setup works, not just whether it wins with generic players
-- future engine balancing can be guided by role/archetype fit rather than formation modifiers alone
+- player behavior becomes more individualized without introducing a second parallel role taxonomy
+- tactical fit emerges from `attributes + traits + formation role + team style`
+- future engine balancing can be guided by role and trait fit rather than formation modifiers alone
 
 Observed sample outcome after implementation:
 
-- `Creator Ten` and `Classic Pair` templates outperformed the more abstract control and pressing templates in the first `50`-per-leg sample
-- `Low Block Outlet` profiles proved effective into `Pressing Wave`, which validates the value of squad-type matchup reporting
-- `Pressing Wave` underperformed badly, suggesting the current engine still undervalues pressing-friendly player mixes relative to the fatigue/exposure cost
-- the benchmark now exposes tactical fit problems that were invisible in the generic tactic matrix
+- balanced benchmark sample moved to roughly `4.22` goals per match, `10.70` home shots, `9.54` away shots
+- defender pass attempts stayed healthy at roughly `20.39` per match and midfielders still dominated circulation at roughly `42.83`
+- quick-distribution and rebound chains are now visible in event data and covered by regression tests
+- the engine is now more behaviorally differentiated, but the first slice is too high-event and will need a follow-up cooling pass on rebound frequency, transition carry-through, and attacking style shot volume
+
+### Fix 6: Trait-originated action phases
+
+The next engine pass should stop treating traits primarily as multipliers and use them to originate specific match actions.
+
+Detailed design note:
+
+- [engine-trait-action-phases.md](/home/quackson/Desktop/Coding/openfootmanager/docs/benchmarks/engine-trait-action-phases.md)
+
+Changes:
+
+- add internal action intents behind the existing zone model
+- compute lightweight pressure and score-state context per action
+- let traits and formation roles bias intent selection
+- add first aftermath chains for rebounds, quick keeper distribution, and pressure-bait progression
+- keep the public event schema compact during this phase
+
+Expected result:
+
+- players with the right traits create distinct possession chains
+- rebounds and quick transitions appear for structural reasons, not as raw stat buffs
+- the engine becomes easier to extend toward richer commentary later
+
+Observed sample outcome after implementation:
+
+- pending implementation
 
 ## Benchmark workflow
 

@@ -54,6 +54,9 @@ pub struct Team {
     #[serde(default)]
     pub match_roles: MatchRoles,
 
+    #[serde(default)]
+    pub tactical_roles: Vec<TacticalRole>,
+
     // Recent form: last 5 results as "W", "D", "L" (most recent last)
     #[serde(default)]
     pub form: Vec<String>,
@@ -69,6 +72,26 @@ pub struct MatchRoles {
     pub penalty_taker: Option<String>,
     pub free_kick_taker: Option<String>,
     pub corner_taker: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TacticalRole {
+    Goalkeeper,
+    SweeperKeeper,
+    CenterBackStopper,
+    CenterBackCover,
+    CenterBackPlaymaker,
+    FullBackSupport,
+    WingBackAttack,
+    HoldingMidfielder,
+    DeepPlaymaker,
+    BoxToBoxMidfielder,
+    AdvancedPlaymaker,
+    WideProgressor,
+    Poacher,
+    TargetForward,
+    ChannelRunner,
+    LinkForward,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -276,8 +299,169 @@ impl Team {
             },
             starting_xi_ids: Vec::new(),
             match_roles: MatchRoles::default(),
+            tactical_roles: default_tactical_roles_for_formation("4-4-2"),
             form: Vec::new(),
             history: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_roles_follow_formation_slot_count() {
+        let roles = default_tactical_roles_for_formation("4-2-3-1");
+        assert_eq!(roles.len(), 11);
+        assert_eq!(roles[0], TacticalRole::Goalkeeper);
+        assert_eq!(roles[1], TacticalRole::FullBackSupport);
+        assert_eq!(roles[2], TacticalRole::CenterBackPlaymaker);
+        assert_eq!(roles[5], TacticalRole::HoldingMidfielder);
+        assert_eq!(roles[6], TacticalRole::DeepPlaymaker);
+        assert_eq!(roles[7], TacticalRole::WideProgressor);
+        assert_eq!(roles[8], TacticalRole::AdvancedPlaymaker);
+        assert_eq!(roles[10], TacticalRole::LinkForward);
+    }
+}
+
+pub fn default_tactical_roles_for_formation(formation: &str) -> Vec<TacticalRole> {
+    let rows = formation_role_rows(formation);
+    let mut roles = Vec::new();
+
+    for row in rows {
+        let count = row.len();
+        for (index, role) in row.into_iter().enumerate() {
+            let resolved = match role {
+                TacticalRole::CenterBackStopper if count >= 3 && index == 0 => {
+                    TacticalRole::CenterBackCover
+                }
+                TacticalRole::CenterBackStopper if count >= 3 && index + 1 == count => {
+                    TacticalRole::CenterBackPlaymaker
+                }
+                TacticalRole::Poacher if count == 1 => TacticalRole::LinkForward,
+                TacticalRole::Poacher if count == 2 && index == 0 => TacticalRole::TargetForward,
+                TacticalRole::BoxToBoxMidfielder if count == 2 && index == 0 => {
+                    TacticalRole::DeepPlaymaker
+                }
+                other => other,
+            };
+            roles.push(resolved);
+        }
+    }
+
+    roles
+}
+
+fn formation_role_rows(formation: &str) -> Vec<Vec<TacticalRole>> {
+    let parts: Vec<usize> = formation
+        .split('-')
+        .filter_map(|part| part.parse::<usize>().ok())
+        .collect();
+
+    match parts.as_slice() {
+        [defenders, midfielders, forwards] => vec![
+            vec![TacticalRole::Goalkeeper],
+            defender_role_row(*defenders),
+            midfield_role_row(*midfielders),
+            forward_role_row(*forwards),
+        ],
+        [defenders, deep_midfielders, attacking_midfielders, forwards] => vec![
+            vec![TacticalRole::Goalkeeper],
+            defender_role_row(*defenders),
+            deep_midfield_role_row(*deep_midfielders),
+            attacking_midfield_role_row(*attacking_midfielders),
+            forward_role_row(*forwards),
+        ],
+        _ => formation_role_rows("4-4-2"),
+    }
+}
+
+fn defender_role_row(count: usize) -> Vec<TacticalRole> {
+    match count {
+        3 => vec![
+            TacticalRole::CenterBackStopper,
+            TacticalRole::CenterBackStopper,
+            TacticalRole::CenterBackStopper,
+        ],
+        4 => vec![
+            TacticalRole::FullBackSupport,
+            TacticalRole::CenterBackPlaymaker,
+            TacticalRole::CenterBackStopper,
+            TacticalRole::FullBackSupport,
+        ],
+        5 => vec![
+            TacticalRole::WingBackAttack,
+            TacticalRole::CenterBackStopper,
+            TacticalRole::CenterBackStopper,
+            TacticalRole::CenterBackStopper,
+            TacticalRole::WingBackAttack,
+        ],
+        _ => vec![TacticalRole::CenterBackStopper; count],
+    }
+}
+
+fn midfield_role_row(count: usize) -> Vec<TacticalRole> {
+    match count {
+        2 => vec![
+            TacticalRole::BoxToBoxMidfielder,
+            TacticalRole::BoxToBoxMidfielder,
+        ],
+        3 => vec![
+            TacticalRole::HoldingMidfielder,
+            TacticalRole::BoxToBoxMidfielder,
+            TacticalRole::AdvancedPlaymaker,
+        ],
+        4 => vec![
+            TacticalRole::WideProgressor,
+            TacticalRole::DeepPlaymaker,
+            TacticalRole::BoxToBoxMidfielder,
+            TacticalRole::WideProgressor,
+        ],
+        5 => vec![
+            TacticalRole::WideProgressor,
+            TacticalRole::HoldingMidfielder,
+            TacticalRole::BoxToBoxMidfielder,
+            TacticalRole::AdvancedPlaymaker,
+            TacticalRole::WideProgressor,
+        ],
+        _ => vec![TacticalRole::BoxToBoxMidfielder; count],
+    }
+}
+
+fn deep_midfield_role_row(count: usize) -> Vec<TacticalRole> {
+    match count {
+        1 => vec![TacticalRole::HoldingMidfielder],
+        2 => vec![TacticalRole::HoldingMidfielder, TacticalRole::DeepPlaymaker],
+        _ => vec![TacticalRole::HoldingMidfielder; count],
+    }
+}
+
+fn attacking_midfield_role_row(count: usize) -> Vec<TacticalRole> {
+    match count {
+        1 => vec![TacticalRole::AdvancedPlaymaker],
+        2 => vec![
+            TacticalRole::WideProgressor,
+            TacticalRole::AdvancedPlaymaker,
+        ],
+        3 => vec![
+            TacticalRole::WideProgressor,
+            TacticalRole::AdvancedPlaymaker,
+            TacticalRole::WideProgressor,
+        ],
+        _ => vec![TacticalRole::AdvancedPlaymaker; count],
+    }
+}
+
+fn forward_role_row(count: usize) -> Vec<TacticalRole> {
+    match count {
+        1 => vec![TacticalRole::Poacher],
+        2 => vec![TacticalRole::Poacher, TacticalRole::Poacher],
+        3 => vec![
+            TacticalRole::ChannelRunner,
+            TacticalRole::Poacher,
+            TacticalRole::ChannelRunner,
+        ],
+        _ => vec![TacticalRole::Poacher; count],
     }
 }

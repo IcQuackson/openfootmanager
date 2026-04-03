@@ -148,13 +148,14 @@ pub fn process_training(game: &mut Game, weekday_num: u32) {
                 .training_focus
                 .as_ref()
                 .or_else(|| plan.group_overrides.get(&player.id))
-                .unwrap_or(&plan.default_focus);
+                .unwrap_or(&plan.default_focus)
+                .clone();
 
             // On rest days or Recovery focus: no training cost
             let condition_cost: u8 = if !is_training_day {
                 0
             } else {
-                match (player_focus, &plan.intensity) {
+                match (&player_focus, &plan.intensity) {
                     (TrainingFocus::Recovery, _) => 0,
                     (_, TrainingIntensity::Low) => 3,
                     (_, TrainingIntensity::Medium) => 6,
@@ -166,7 +167,7 @@ pub fn process_training(game: &mut Game, weekday_num: u32) {
             let recovery_base: f64 = if !is_training_day {
                 7.0 * plan.bonus.physio_mult * plan.medical_facility_mult
             } else {
-                match player_focus {
+                match &player_focus {
                     TrainingFocus::Recovery => {
                         9.0 * plan.bonus.physio_mult * plan.medical_facility_mult
                     }
@@ -226,12 +227,12 @@ pub fn process_training(game: &mut Game, weekday_num: u32) {
                 * plan.bonus.specialization_mult;
 
             // Apply attribute gains based on player's effective focus
-            apply_focus_gains(&mut player.attributes, player_focus, gain);
+            apply_focus_gains(&mut player.attributes, &player_focus, gain);
 
             // Apply fitness changes based on training focus.
             // Physical training builds fitness; non-physical days slowly decay it if peak.
             // Recovery focus gives a tiny fitness boost.
-            apply_fitness_change(&mut player.fitness, player_focus, intensity_mult);
+            apply_fitness_change(&mut player.fitness, &player_focus, intensity_mult);
 
             // Apply condition: deplete from training, then recover
             player.condition = player.condition.saturating_sub(condition_cost);

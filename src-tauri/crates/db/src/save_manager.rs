@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use domain::player::{Player, Position};
+use domain::team::default_tactical_roles_for_formation;
 use ofm_core::clock::GameClock;
 use ofm_core::game::{BoardObjective, Game, ObjectiveType, ScoutingAssignment};
 use ofm_core::player_identity;
@@ -70,6 +71,7 @@ impl SaveManager {
         let mut persisted_game = game.clone();
 
         canonicalize_game_starting_xi_ids(&mut persisted_game);
+        canonicalize_game_player_traits_and_roles(&mut persisted_game);
 
         debug!("[save_manager] creating save {} at {:?}", save_id, db_path);
 
@@ -110,6 +112,7 @@ impl SaveManager {
         let mut persisted_game = game.clone();
 
         canonicalize_game_starting_xi_ids(&mut persisted_game);
+        canonicalize_game_player_traits_and_roles(&mut persisted_game);
 
         debug!("[save_manager] saving game to {}", save_id);
 
@@ -161,6 +164,14 @@ impl SaveManager {
         if canonicalize_game_starting_xi_ids(&mut game) {
             info!(
                 "[save_manager] canonicalized saved starting XI order for save {}",
+                save_id
+            );
+            needs_resave = true;
+        }
+
+        if canonicalize_game_player_traits_and_roles(&mut game) {
+            info!(
+                "[save_manager] initialized missing player traits / tactical roles for save {}",
                 save_id
             );
             needs_resave = true;
@@ -456,6 +467,24 @@ pub(crate) fn canonicalize_game_starting_xi_ids(game: &mut Game) -> bool {
 
     for team in &mut game.teams {
         changed |= canonicalize_team_starting_xi_ids(team, &players_by_id);
+    }
+
+    changed
+}
+
+pub(crate) fn canonicalize_game_player_traits_and_roles(game: &mut Game) -> bool {
+    let mut changed = false;
+
+    for player in &mut game.players {
+        changed |= player.repair_missing_traits();
+    }
+
+    for team in &mut game.teams {
+        let defaults = default_tactical_roles_for_formation(&team.formation);
+        if team.tactical_roles.len() != defaults.len() || team.tactical_roles.is_empty() {
+            team.tactical_roles = defaults;
+            changed = true;
+        }
     }
 
     changed

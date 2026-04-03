@@ -5,6 +5,7 @@ mod round_summary;
 use crate::board_objectives;
 use crate::game::Game;
 use crate::player_events;
+use crate::player_rating::{effective_rating_for_assignment, formation_slots, natural_ovr};
 use crate::random_events;
 use crate::scouting;
 use crate::training;
@@ -12,6 +13,7 @@ use crate::transfers;
 use chrono::Datelike;
 use domain::league::FixtureStatus;
 use domain::player::Position as DomainPosition;
+use domain::team::{TacticalRole as DomainTacticalRole, default_tactical_roles_for_formation};
 use log::{debug, info};
 
 // Re-export public items
@@ -127,47 +129,60 @@ fn build_engine_team(game: &Game, team_id: &str) -> engine::TeamData {
         ),
     };
 
-    let players: Vec<engine::PlayerData> = game
+    let available_players: Vec<&domain::player::Player> = game
         .players
         .iter()
-        .filter(|p| p.team_id.as_deref() == Some(team_id))
-        .map(|p| {
-            let pos = match p.position.to_group_position() {
-                DomainPosition::Goalkeeper => engine::Position::Goalkeeper,
-                DomainPosition::Defender => engine::Position::Defender,
-                DomainPosition::Midfielder => engine::Position::Midfielder,
-                DomainPosition::Forward => engine::Position::Forward,
-                _ => engine::Position::Midfielder,
-            };
-            engine::PlayerData {
-                id: p.id.clone(),
-                name: p.match_name.clone(),
-                position: pos,
-                condition: p.condition,
-                fitness: p.fitness,
-                pace: p.attributes.pace,
-                stamina: p.attributes.stamina,
-                strength: p.attributes.strength,
-                agility: p.attributes.agility,
-                passing: p.attributes.passing,
-                shooting: p.attributes.shooting,
-                tackling: p.attributes.tackling,
-                dribbling: p.attributes.dribbling,
-                defending: p.attributes.defending,
-                positioning: p.attributes.positioning,
-                vision: p.attributes.vision,
-                decisions: p.attributes.decisions,
-                composure: p.attributes.composure,
-                aggression: p.attributes.aggression,
-                teamwork: p.attributes.teamwork,
-                leadership: p.attributes.leadership,
-                handling: p.attributes.handling,
-                reflexes: p.attributes.reflexes,
-                aerial: p.attributes.aerial,
-                traits: p.traits.iter().map(|t| format!("{:?}", t)).collect(),
+        .filter(|p| p.team_id.as_deref() == Some(team_id) && p.injury.is_none())
+        .collect();
+    let slots = formation_slots(&formation);
+    let tactical_roles = team
+        .map(|team| {
+            if team.tactical_roles.len() == slots.len() {
+                team.tactical_roles.clone()
+            } else {
+                default_tactical_roles_for_formation(&formation)
             }
         })
-        .collect();
+        .unwrap_or_else(|| default_tactical_roles_for_formation(&formation));
+    let mut used_ids = std::collections::HashSet::new();
+    let mut players = Vec::with_capacity(11);
+
+    for (index, slot) in slots.iter().take(11).enumerate() {
+        let best_player = available_players
+            .iter()
+            .copied()
+            .filter(|player| !used_ids.contains(&player.id))
+            .max_by(|left, right| {
+                effective_rating_for_assignment(left, slot)
+                    .partial_cmp(&effective_rating_for_assignment(right, slot))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+        let Some(player) = best_player else {
+            break;
+        };
+
+        used_ids.insert(player.id.clone());
+        let role = tactical_roles
+            .get(index)
+            .copied()
+            .unwrap_or_else(|| default_role_for_slot(slot));
+        players.push(to_engine_player(player, role));
+    }
+
+    if players.is_empty() {
+        let mut fallbacks = available_players;
+        fallbacks.sort_by(|left, right| {
+            natural_ovr(right)
+                .partial_cmp(&natural_ovr(left))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        players = fallbacks
+            .into_iter()
+            .take(11)
+            .map(|player| to_engine_player(player, default_role_for_position(&player.position)))
+            .collect();
+    }
 
     engine::TeamData {
         id: team_id.to_string(),
@@ -176,6 +191,95 @@ fn build_engine_team(game: &Game, team_id: &str) -> engine::TeamData {
         play_style,
         players,
     }
+}
+
+fn to_engine_player(p: &domain::player::Player, role: DomainTacticalRole) -> engine::PlayerData {
+    let pos = match p.position.to_group_position() {
+        DomainPosition::Goalkeeper => engine::Position::Goalkeeper,
+        DomainPosition::Defender => engine::Position::Defender,
+        DomainPosition::Midfielder => engine::Position::Midfielder,
+        DomainPosition::Forward => engine::Position::Forward,
+        _ => engine::Position::Midfielder,
+    };
+
+    engine::PlayerData {
+        id: p.id.clone(),
+        name: p.match_name.clone(),
+        position: pos,
+        condition: p.condition,
+        fitness: p.fitness,
+        pace: p.attributes.pace,
+        stamina: p.attributes.stamina,
+        strength: p.attributes.strength,
+        agility: p.attributes.agility,
+        passing: p.attributes.passing,
+        shooting: p.attributes.shooting,
+        tackling: p.attributes.tackling,
+        dribbling: p.attributes.dribbling,
+        defending: p.attributes.defending,
+        positioning: p.attributes.positioning,
+        vision: p.attributes.vision,
+        decisions: p.attributes.decisions,
+        composure: p.attributes.composure,
+        aggression: p.attributes.aggression,
+        teamwork: p.attributes.teamwork,
+        leadership: p.attributes.leadership,
+        handling: p.attributes.handling,
+        reflexes: p.attributes.reflexes,
+        aerial: p.attributes.aerial,
+        traits: p.traits.iter().map(|t| format!("{:?}", t)).collect(),
+        role: map_tactical_role(role),
+    }
+}
+
+fn map_tactical_role(role: DomainTacticalRole) -> engine::TacticalRole {
+    match role {
+        DomainTacticalRole::Goalkeeper => engine::TacticalRole::Goalkeeper,
+        DomainTacticalRole::SweeperKeeper => engine::TacticalRole::SweeperKeeper,
+        DomainTacticalRole::CenterBackStopper => engine::TacticalRole::CenterBackStopper,
+        DomainTacticalRole::CenterBackCover => engine::TacticalRole::CenterBackCover,
+        DomainTacticalRole::CenterBackPlaymaker => engine::TacticalRole::CenterBackPlaymaker,
+        DomainTacticalRole::FullBackSupport => engine::TacticalRole::FullBackSupport,
+        DomainTacticalRole::WingBackAttack => engine::TacticalRole::WingBackAttack,
+        DomainTacticalRole::HoldingMidfielder => engine::TacticalRole::HoldingMidfielder,
+        DomainTacticalRole::DeepPlaymaker => engine::TacticalRole::DeepPlaymaker,
+        DomainTacticalRole::BoxToBoxMidfielder => engine::TacticalRole::BoxToBoxMidfielder,
+        DomainTacticalRole::AdvancedPlaymaker => engine::TacticalRole::AdvancedPlaymaker,
+        DomainTacticalRole::WideProgressor => engine::TacticalRole::WideProgressor,
+        DomainTacticalRole::Poacher => engine::TacticalRole::Poacher,
+        DomainTacticalRole::TargetForward => engine::TacticalRole::TargetForward,
+        DomainTacticalRole::ChannelRunner => engine::TacticalRole::ChannelRunner,
+        DomainTacticalRole::LinkForward => engine::TacticalRole::LinkForward,
+    }
+}
+
+fn default_role_for_slot(position: &domain::player::Position) -> DomainTacticalRole {
+    match position {
+        DomainPosition::Goalkeeper => DomainTacticalRole::Goalkeeper,
+        DomainPosition::LeftBack | DomainPosition::RightBack => DomainTacticalRole::FullBackSupport,
+        DomainPosition::LeftWingBack | DomainPosition::RightWingBack => {
+            DomainTacticalRole::WingBackAttack
+        }
+        DomainPosition::CenterBack | DomainPosition::Defender => {
+            DomainTacticalRole::CenterBackStopper
+        }
+        DomainPosition::DefensiveMidfielder => DomainTacticalRole::HoldingMidfielder,
+        DomainPosition::AttackingMidfielder => DomainTacticalRole::AdvancedPlaymaker,
+        DomainPosition::LeftMidfielder | DomainPosition::RightMidfielder => {
+            DomainTacticalRole::WideProgressor
+        }
+        DomainPosition::CentralMidfielder | DomainPosition::Midfielder => {
+            DomainTacticalRole::BoxToBoxMidfielder
+        }
+        DomainPosition::LeftWinger | DomainPosition::RightWinger => {
+            DomainTacticalRole::ChannelRunner
+        }
+        DomainPosition::Striker | DomainPosition::Forward => DomainTacticalRole::Poacher,
+    }
+}
+
+fn default_role_for_position(position: &domain::player::Position) -> DomainTacticalRole {
+    default_role_for_slot(position)
 }
 
 // ---------------------------------------------------------------------------

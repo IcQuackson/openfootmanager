@@ -12,6 +12,37 @@ pub enum Position {
     Forward,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TacticalRole {
+    Goalkeeper,
+    SweeperKeeper,
+    CenterBackStopper,
+    CenterBackCover,
+    CenterBackPlaymaker,
+    FullBackSupport,
+    WingBackAttack,
+    HoldingMidfielder,
+    DeepPlaymaker,
+    BoxToBoxMidfielder,
+    AdvancedPlaymaker,
+    WideProgressor,
+    Poacher,
+    TargetForward,
+    ChannelRunner,
+    LinkForward,
+}
+
+impl TacticalRole {
+    pub fn default_for_position(position: Position) -> Self {
+        match position {
+            Position::Goalkeeper => TacticalRole::Goalkeeper,
+            Position::Defender => TacticalRole::CenterBackStopper,
+            Position::Midfielder => TacticalRole::BoxToBoxMidfielder,
+            Position::Forward => TacticalRole::Poacher,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // PlayStyle — mirrors domain::team::PlayStyle
 // ---------------------------------------------------------------------------
@@ -78,6 +109,8 @@ pub struct PlayerData {
     // Traits (string names matching domain::player::PlayerTrait variants)
     #[serde(default)]
     pub traits: Vec<String>,
+    #[serde(default = "default_tactical_role")]
+    pub role: TacticalRole,
 }
 
 fn default_engine_attr() -> u8 {
@@ -86,6 +119,10 @@ fn default_engine_attr() -> u8 {
 
 fn default_fitness() -> u8 {
     75
+}
+
+fn default_tactical_role() -> TacticalRole {
+    TacticalRole::BoxToBoxMidfielder
 }
 
 impl PlayerData {

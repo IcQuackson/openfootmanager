@@ -1,6 +1,6 @@
 use rand::Rng;
 
-use crate::types::{MatchConfig, PlayStyle, PlayerData, Side};
+use crate::types::{MatchConfig, PlayStyle, PlayerData, Side, TacticalRole};
 
 // ---------------------------------------------------------------------------
 // PlayerSnap — lightweight snapshot of a player to avoid borrow conflicts
@@ -10,6 +10,7 @@ use crate::types::{MatchConfig, PlayStyle, PlayerData, Side};
 #[allow(dead_code)]
 pub(crate) struct PlayerSnap {
     pub id: String,
+    pub role: TacticalRole,
     pub pace: u8,
     pub stamina: u8,
     pub strength: u8,
@@ -36,6 +37,7 @@ impl PlayerSnap {
     pub fn from(p: &PlayerData) -> Self {
         Self {
             id: p.id.clone(),
+            role: p.role,
             pace: p.pace,
             stamina: p.stamina,
             strength: p.strength,
@@ -64,6 +66,381 @@ impl PlayerSnap {
     }
 }
 
+fn weighted_mean(weighted_values: &[(u8, f64)]) -> f64 {
+    let total_weight: f64 = weighted_values.iter().map(|(_, weight)| *weight).sum();
+    if total_weight <= f64::EPSILON {
+        return 0.0;
+    }
+
+    weighted_values
+        .iter()
+        .map(|(value, weight)| f64::from(*value) * *weight)
+        .sum::<f64>()
+        / total_weight
+}
+
+fn normalize_strength(score: f64, floor: f64, ceiling: f64) -> f64 {
+    ((score - floor) / (ceiling - floor)).clamp(0.0, 1.0)
+}
+
+fn inverse_attr(value: u8) -> f64 {
+    100.0 - f64::from(value)
+}
+
+pub(crate) fn trait_strength(snap: &PlayerSnap, trait_name: &str) -> f64 {
+    if !snap.has_trait(trait_name) {
+        return 0.0;
+    }
+
+    let raw = match trait_name {
+        "Sharpshooter" => weighted_mean(&[
+            (snap.shooting, 0.5),
+            (snap.composure, 0.3),
+            (snap.decisions, 0.2),
+        ]),
+        "CoolHead" => weighted_mean(&[(snap.composure, 0.55), (snap.decisions, 0.45)]),
+        "CompleteForward" => weighted_mean(&[
+            (snap.shooting, 0.3),
+            (snap.dribbling, 0.2),
+            (snap.pace, 0.15),
+            (snap.strength, 0.15),
+            (snap.positioning, 0.1),
+            (snap.composure, 0.1),
+        ]),
+        "ToePokeFinisher" => weighted_mean(&[
+            (snap.shooting, 0.5),
+            (snap.agility, 0.2),
+            (snap.composure, 0.3),
+        ]),
+        "HalfVolleyComfort" => weighted_mean(&[
+            (snap.shooting, 0.45),
+            (snap.composure, 0.3),
+            (snap.agility, 0.25),
+        ]),
+        "ClutchExecutor" => weighted_mean(&[
+            (snap.composure, 0.45),
+            (snap.decisions, 0.35),
+            (snap.shooting, 0.2),
+        ]),
+        "Dribbler" => weighted_mean(&[
+            (snap.dribbling, 0.55),
+            (snap.agility, 0.25),
+            (snap.pace, 0.2),
+        ]),
+        "Speedster" => weighted_mean(&[(snap.pace, 0.75), (snap.agility, 0.25)]),
+        "Agile" => weighted_mean(&[(snap.agility, 0.7), (snap.dribbling, 0.3)]),
+        "DisguisedFirstTouch" => weighted_mean(&[
+            (snap.dribbling, 0.45),
+            (snap.agility, 0.3),
+            (snap.composure, 0.25),
+        ]),
+        "RecoveryTouch" => weighted_mean(&[
+            (snap.dribbling, 0.4),
+            (snap.agility, 0.35),
+            (snap.strength, 0.25),
+        ]),
+        "BounceRoomDribbler" => weighted_mean(&[
+            (snap.dribbling, 0.45),
+            (snap.agility, 0.3),
+            (snap.strength, 0.25),
+        ]),
+        "Playmaker" => weighted_mean(&[
+            (snap.passing, 0.4),
+            (snap.vision, 0.35),
+            (snap.decisions, 0.25),
+        ]),
+        "Visionary" => weighted_mean(&[
+            (snap.vision, 0.55),
+            (snap.passing, 0.2),
+            (snap.decisions, 0.25),
+        ]),
+        "SetPieceSpecialist" => weighted_mean(&[
+            (snap.passing, 0.4),
+            (snap.shooting, 0.25),
+            (snap.vision, 0.2),
+            (snap.composure, 0.15),
+        ]),
+        "EarlyScanner" => weighted_mean(&[
+            (snap.vision, 0.4),
+            (snap.decisions, 0.35),
+            (snap.composure, 0.25),
+        ]),
+        "OutsideFootPasser" => weighted_mean(&[
+            (snap.passing, 0.55),
+            (snap.dribbling, 0.2),
+            (snap.vision, 0.25),
+        ]),
+        "OneTouchSpecialist" => weighted_mean(&[
+            (snap.passing, 0.4),
+            (snap.vision, 0.25),
+            (snap.composure, 0.2),
+            (snap.decisions, 0.15),
+        ]),
+        "BallWinner" => weighted_mean(&[
+            (snap.tackling, 0.45),
+            (snap.aggression, 0.2),
+            (snap.defending, 0.2),
+            (snap.stamina, 0.15),
+        ]),
+        "Rock" => weighted_mean(&[
+            (snap.defending, 0.4),
+            (snap.positioning, 0.3),
+            (snap.strength, 0.2),
+            (snap.tackling, 0.1),
+        ]),
+        "Tank" => weighted_mean(&[
+            (snap.strength, 0.55),
+            (snap.stamina, 0.25),
+            (snap.aerial, 0.2),
+        ]),
+        "ContainmentSpecialist" => weighted_mean(&[
+            (snap.defending, 0.35),
+            (snap.positioning, 0.35),
+            (snap.decisions, 0.15),
+            (snap.composure, 0.15),
+        ]),
+        "PassingLaneThief" => weighted_mean(&[
+            (snap.tackling, 0.25),
+            (snap.vision, 0.3),
+            (snap.decisions, 0.25),
+            (snap.positioning, 0.2),
+        ]),
+        "AerialGrappler" => weighted_mean(&[
+            (snap.aerial, 0.45),
+            (snap.strength, 0.35),
+            (snap.aggression, 0.2),
+        ]),
+        "SafeHands" => weighted_mean(&[
+            (snap.handling, 0.6),
+            (snap.reflexes, 0.2),
+            (snap.composure, 0.2),
+        ]),
+        "CatReflexes" => weighted_mean(&[
+            (snap.reflexes, 0.65),
+            (snap.agility, 0.2),
+            (snap.positioning, 0.15),
+        ]),
+        "AerialDominance" => weighted_mean(&[
+            (snap.aerial, 0.55),
+            (snap.strength, 0.25),
+            (snap.positioning, 0.2),
+        ]),
+        "ReboundDirector" => weighted_mean(&[
+            (snap.handling, 0.4),
+            (snap.reflexes, 0.2),
+            (snap.decisions, 0.2),
+            (snap.positioning, 0.2),
+        ]),
+        "BreakawayHypnotist" => weighted_mean(&[
+            (snap.reflexes, 0.35),
+            (snap.composure, 0.25),
+            (snap.positioning, 0.25),
+            (snap.decisions, 0.15),
+        ]),
+        "TrafficCommander" => weighted_mean(&[
+            (snap.aerial, 0.3),
+            (snap.positioning, 0.3),
+            (snap.leadership, 0.2),
+            (snap.composure, 0.2),
+        ]),
+        "HotHead" => {
+            weighted_mean(&[
+                (snap.aggression, 0.7),
+                (snap.tackling, 0.1),
+                (snap.strength, 0.2),
+            ]) + inverse_attr(snap.composure) * 0.25
+        }
+        "TacticalFouler" => weighted_mean(&[
+            (snap.aggression, 0.3),
+            (snap.tackling, 0.3),
+            (snap.decisions, 0.2),
+            (snap.positioning, 0.2),
+        ]),
+        "Provocable" => {
+            weighted_mean(&[
+                (snap.aggression, 0.6),
+                (snap.strength, 0.1),
+                (snap.decisions, 0.1),
+            ]) + inverse_attr(snap.composure) * 0.4
+        }
+        "RefereeManipulator" => weighted_mean(&[
+            (snap.decisions, 0.4),
+            (snap.composure, 0.35),
+            (snap.vision, 0.25),
+        ]),
+        "Engine" => weighted_mean(&[
+            (snap.stamina, 0.45),
+            (snap.pace, 0.2),
+            (snap.teamwork, 0.2),
+            (snap.decisions, 0.15),
+        ]),
+        "TeamPlayer" => weighted_mean(&[
+            (snap.teamwork, 0.55),
+            (snap.decisions, 0.2),
+            (snap.passing, 0.1),
+            (snap.stamina, 0.15),
+        ]),
+        "Tireless" => weighted_mean(&[
+            (snap.stamina, 0.75),
+            (snap.teamwork, 0.1),
+            (snap.pace, 0.15),
+        ]),
+        "TempoManipulator" => weighted_mean(&[
+            (snap.passing, 0.25),
+            (snap.decisions, 0.35),
+            (snap.composure, 0.2),
+            (snap.vision, 0.2),
+        ]),
+        "RiskCalibrator" => weighted_mean(&[
+            (snap.decisions, 0.45),
+            (snap.composure, 0.3),
+            (snap.vision, 0.25),
+        ]),
+        "TransitionAnticipator" => weighted_mean(&[
+            (snap.positioning, 0.35),
+            (snap.pace, 0.25),
+            (snap.decisions, 0.25),
+            (snap.stamina, 0.15),
+        ]),
+        "LineDictator" => weighted_mean(&[
+            (snap.leadership, 0.45),
+            (snap.positioning, 0.3),
+            (snap.decisions, 0.25),
+        ]),
+        "ThrowLauncher" => weighted_mean(&[
+            (snap.passing, 0.45),
+            (snap.vision, 0.3),
+            (snap.decisions, 0.25),
+        ]),
+        "RecoverySprinter" => weighted_mean(&[
+            (snap.pace, 0.45),
+            (snap.defending, 0.2),
+            (snap.composure, 0.2),
+            (snap.positioning, 0.15),
+        ]),
+        "BodyAngleManipulator" => weighted_mean(&[
+            (snap.defending, 0.3),
+            (snap.positioning, 0.3),
+            (snap.composure, 0.2),
+            (snap.decisions, 0.2),
+        ]),
+        "SecondContactWinner" => weighted_mean(&[
+            (snap.strength, 0.35),
+            (snap.aggression, 0.25),
+            (snap.agility, 0.2),
+            (snap.stamina, 0.2),
+        ]),
+        "SpaceMagnet" => weighted_mean(&[
+            (snap.positioning, 0.35),
+            (snap.vision, 0.25),
+            (snap.agility, 0.2),
+            (snap.decisions, 0.2),
+        ]),
+        "LateBoxArriver" => weighted_mean(&[
+            (snap.positioning, 0.35),
+            (snap.stamina, 0.25),
+            (snap.shooting, 0.2),
+            (snap.decisions, 0.2),
+        ]),
+        "BlindSideRunner" => weighted_mean(&[
+            (snap.pace, 0.35),
+            (snap.positioning, 0.3),
+            (snap.agility, 0.15),
+            (snap.decisions, 0.2),
+        ]),
+        "NearPostHunter" => weighted_mean(&[
+            (snap.positioning, 0.4),
+            (snap.pace, 0.2),
+            (snap.shooting, 0.25),
+            (snap.agility, 0.15),
+        ]),
+        "FarPostGhost" => weighted_mean(&[
+            (snap.positioning, 0.4),
+            (snap.composure, 0.25),
+            (snap.aerial, 0.15),
+            (snap.decisions, 0.2),
+        ]),
+        "ReboundInstinct" => weighted_mean(&[
+            (snap.positioning, 0.35),
+            (snap.shooting, 0.25),
+            (snap.aggression, 0.2),
+            (snap.decisions, 0.2),
+        ]),
+        "SecondBallPredator" => weighted_mean(&[
+            (snap.positioning, 0.35),
+            (snap.aggression, 0.25),
+            (snap.agility, 0.2),
+            (snap.decisions, 0.2),
+        ]),
+        "StaticLure" => weighted_mean(&[
+            (snap.composure, 0.35),
+            (snap.positioning, 0.25),
+            (snap.decisions, 0.2),
+            (snap.teamwork, 0.2),
+        ]),
+        "ChannelDrifter" => weighted_mean(&[
+            (snap.dribbling, 0.3),
+            (snap.positioning, 0.25),
+            (snap.pace, 0.2),
+            (snap.decisions, 0.25),
+        ]),
+        "ChaosCreator" => weighted_mean(&[
+            (snap.dribbling, 0.3),
+            (snap.aggression, 0.25),
+            (snap.decisions, 0.2),
+            (snap.vision, 0.25),
+        ]),
+        "KeeperDisruptor" => weighted_mean(&[
+            (snap.strength, 0.3),
+            (snap.positioning, 0.3),
+            (snap.aggression, 0.2),
+            (snap.composure, 0.2),
+        ]),
+        "DecoyMover" => weighted_mean(&[
+            (snap.teamwork, 0.35),
+            (snap.positioning, 0.25),
+            (snap.decisions, 0.25),
+            (snap.stamina, 0.15),
+        ]),
+        "PressBaiter" => weighted_mean(&[
+            (snap.composure, 0.35),
+            (snap.passing, 0.25),
+            (snap.strength, 0.2),
+            (snap.decisions, 0.2),
+        ]),
+        "ShieldAddict" => weighted_mean(&[
+            (snap.strength, 0.35),
+            (snap.composure, 0.25),
+            (snap.teamwork, 0.15),
+            (snap.decisions, 0.25),
+        ]),
+        "DelayedPasser" => weighted_mean(&[
+            (snap.passing, 0.3),
+            (snap.vision, 0.25),
+            (snap.composure, 0.25),
+            (snap.decisions, 0.2),
+        ]),
+        "TimeKiller" => weighted_mean(&[
+            (snap.composure, 0.35),
+            (snap.strength, 0.25),
+            (snap.teamwork, 0.15),
+            (snap.decisions, 0.25),
+        ]),
+        "NutmegOpportunist" => weighted_mean(&[
+            (snap.dribbling, 0.45),
+            (snap.agility, 0.3),
+            (snap.composure, 0.25),
+        ]),
+        _ => weighted_mean(&[
+            (snap.decisions, 0.34),
+            (snap.composure, 0.33),
+            (snap.positioning, 0.33),
+        ]),
+    };
+
+    normalize_strength(raw, 62.0, 92.0)
+}
+
 // ---------------------------------------------------------------------------
 // TraitContext — which game action context we're computing a bonus for
 // ---------------------------------------------------------------------------
@@ -79,87 +456,337 @@ pub(crate) enum TraitContext {
     Midfield,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ActionIntent {
+    SafeRecyclePass,
+    SplitLinePass,
+    BaitPressTouch,
+    OneTouchCombination,
+    DelayedRelease,
+    ProgressiveCarry,
+    ThirdManLayoff,
+    PressEscapeTurn,
+    LinkPlaySlip,
+    DirectDribble,
+    BlindSideRun,
+    LateBoxDelivery,
+    NearPostAttack,
+    StepInInterception,
+    ContainAndShowWide,
+    TacticalFoulStop,
+    AerialClearance,
+    SecureClaim,
+    LaunchThrow,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct IntentContext {
+    pub under_pressure: bool,
+    pub in_transition: bool,
+    pub late_game: bool,
+    pub protecting_lead: bool,
+    pub chasing_game: bool,
+}
+
 /// Compute a multiplicative trait bonus for a specific action context.
 /// Returns a modifier >= 1.0 (bonus) based on relevant traits.
 pub(crate) fn trait_bonus(snap: &PlayerSnap, context: TraitContext) -> f64 {
     let mut bonus = 1.0;
     match context {
         TraitContext::Shooting => {
-            if snap.has_trait("Sharpshooter") {
-                bonus *= 1.08;
-            }
-            if snap.has_trait("CoolHead") {
-                bonus *= 1.04;
-            }
-            if snap.has_trait("CompleteForward") {
-                bonus *= 1.05;
-            }
+            bonus *= 1.0 + trait_strength(snap, "Sharpshooter") * 0.08;
+            bonus *= 1.0 + trait_strength(snap, "CoolHead") * 0.04;
+            bonus *= 1.0 + trait_strength(snap, "CompleteForward") * 0.05;
+            bonus *= 1.0 + trait_strength(snap, "ToePokeFinisher") * 0.04;
+            bonus *= 1.0 + trait_strength(snap, "HalfVolleyComfort") * 0.03;
+            bonus *= 1.0 + trait_strength(snap, "ClutchExecutor") * 0.04;
         }
         TraitContext::Dribbling => {
-            if snap.has_trait("Dribbler") {
-                bonus *= 1.08;
-            }
-            if snap.has_trait("Speedster") {
-                bonus *= 1.04;
-            }
-            if snap.has_trait("Agile") {
-                bonus *= 1.04;
-            }
+            bonus *= 1.0 + trait_strength(snap, "Dribbler") * 0.08;
+            bonus *= 1.0 + trait_strength(snap, "Speedster") * 0.04;
+            bonus *= 1.0 + trait_strength(snap, "Agile") * 0.04;
+            bonus *= 1.0 + trait_strength(snap, "DisguisedFirstTouch") * 0.05;
+            bonus *= 1.0 + trait_strength(snap, "RecoveryTouch") * 0.03;
+            bonus *= 1.0 + trait_strength(snap, "BounceRoomDribbler") * 0.03;
         }
         TraitContext::Passing => {
-            if snap.has_trait("Playmaker") {
-                bonus *= 1.08;
-            }
-            if snap.has_trait("Visionary") {
-                bonus *= 1.05;
-            }
-            if snap.has_trait("SetPieceSpecialist") {
-                bonus *= 1.03;
-            }
+            bonus *= 1.0 + trait_strength(snap, "Playmaker") * 0.08;
+            bonus *= 1.0 + trait_strength(snap, "Visionary") * 0.05;
+            bonus *= 1.0 + trait_strength(snap, "SetPieceSpecialist") * 0.03;
+            bonus *= 1.0 + trait_strength(snap, "EarlyScanner") * 0.03;
+            bonus *= 1.0 + trait_strength(snap, "OutsideFootPasser") * 0.03;
+            bonus *= 1.0 + trait_strength(snap, "OneTouchSpecialist") * 0.03;
         }
         TraitContext::Tackling => {
-            if snap.has_trait("BallWinner") {
-                bonus *= 1.08;
-            }
-            if snap.has_trait("Rock") {
-                bonus *= 1.05;
-            }
-            if snap.has_trait("Tank") {
-                bonus *= 1.04;
-            }
+            bonus *= 1.0 + trait_strength(snap, "BallWinner") * 0.08;
+            bonus *= 1.0 + trait_strength(snap, "Rock") * 0.05;
+            bonus *= 1.0 + trait_strength(snap, "Tank") * 0.04;
+            bonus *= 1.0 + trait_strength(snap, "ContainmentSpecialist") * 0.03;
+            bonus *= 1.0 + trait_strength(snap, "PassingLaneThief") * 0.03;
+            bonus *= 1.0 + trait_strength(snap, "AerialGrappler") * 0.02;
         }
         TraitContext::Goalkeeping => {
-            if snap.has_trait("SafeHands") {
-                bonus *= 1.08;
-            }
-            if snap.has_trait("CatReflexes") {
-                bonus *= 1.06;
-            }
-            if snap.has_trait("AerialDominance") {
-                bonus *= 1.04;
-            }
+            bonus *= 1.0 + trait_strength(snap, "SafeHands") * 0.08;
+            bonus *= 1.0 + trait_strength(snap, "CatReflexes") * 0.06;
+            bonus *= 1.0 + trait_strength(snap, "AerialDominance") * 0.04;
+            bonus *= 1.0 + trait_strength(snap, "ReboundDirector") * 0.03;
+            bonus *= 1.0 + trait_strength(snap, "BreakawayHypnotist") * 0.03;
+            bonus *= 1.0 + trait_strength(snap, "TrafficCommander") * 0.02;
         }
         TraitContext::Foul => {
-            if snap.has_trait("HotHead") {
-                bonus *= 1.25;
-            }
-            if snap.has_trait("CoolHead") {
-                bonus *= 0.70;
-            }
+            bonus *= 1.0 + trait_strength(snap, "HotHead") * 0.25;
+            bonus *= 1.0 - trait_strength(snap, "CoolHead") * 0.30;
+            bonus *= 1.0 + trait_strength(snap, "TacticalFouler") * 0.08;
+            bonus *= 1.0 + trait_strength(snap, "Provocable") * 0.12;
+            bonus *= 1.0 - trait_strength(snap, "RefereeManipulator") * 0.10;
         }
         TraitContext::Midfield => {
-            if snap.has_trait("Engine") {
-                bonus *= 1.06;
-            }
-            if snap.has_trait("TeamPlayer") {
-                bonus *= 1.04;
-            }
-            if snap.has_trait("Tireless") {
-                bonus *= 1.03;
-            }
+            bonus *= 1.0 + trait_strength(snap, "Engine") * 0.06;
+            bonus *= 1.0 + trait_strength(snap, "TeamPlayer") * 0.04;
+            bonus *= 1.0 + trait_strength(snap, "Tireless") * 0.03;
+            bonus *= 1.0 + trait_strength(snap, "TempoManipulator") * 0.03;
+            bonus *= 1.0 + trait_strength(snap, "RiskCalibrator") * 0.03;
+            bonus *= 1.0 + trait_strength(snap, "TransitionAnticipator") * 0.02;
         }
     }
     bonus
+}
+
+pub(crate) fn choose_buildup_intent<R: Rng>(
+    snap: &PlayerSnap,
+    style: PlayStyle,
+    context: IntentContext,
+    rng: &mut R,
+) -> ActionIntent {
+    let profile = style_profile(style);
+    let weights = vec![
+        (ActionIntent::SafeRecyclePass, {
+            1.0 + profile.buildup_retain * 0.35
+                + trait_strength(snap, "TempoManipulator") * 0.25
+                + trait_strength(snap, "RiskCalibrator") * 0.15
+                + if context.protecting_lead { 0.45 } else { 0.0 }
+        }),
+        (ActionIntent::SplitLinePass, {
+            0.55 + profile.midfield_control * 0.20
+                + trait_strength(snap, "Playmaker") * 0.55
+                + trait_strength(snap, "Visionary") * 0.45
+                + trait_strength(snap, "EarlyScanner") * 0.35
+                + trait_strength(snap, "OutsideFootPasser") * 0.20
+                + if matches!(
+                    snap.role,
+                    TacticalRole::CenterBackPlaymaker | TacticalRole::DeepPlaymaker
+                ) {
+                    0.35
+                } else {
+                    0.0
+                }
+                + if context.in_transition { 0.18 } else { 0.0 }
+        }),
+        (ActionIntent::BaitPressTouch, {
+            0.20 + profile.buildup_retain * 0.10
+                + trait_strength(snap, "PressBaiter") * 0.95
+                + trait_strength(snap, "ShieldAddict") * 0.25
+                + trait_strength(snap, "RecoveryTouch") * 0.18
+                + if context.under_pressure { 0.60 } else { 0.0 }
+                + if context.chasing_game { 0.15 } else { 0.0 }
+        }),
+    ];
+
+    weights[weighted_index(
+        &weights
+            .iter()
+            .map(|(_, weight)| *weight)
+            .collect::<Vec<_>>(),
+        rng,
+    )]
+    .0
+}
+
+pub(crate) fn choose_midfield_intent<R: Rng>(
+    snap: &PlayerSnap,
+    style: PlayStyle,
+    context: IntentContext,
+    rng: &mut R,
+) -> ActionIntent {
+    let profile = style_profile(style);
+    let weights = vec![
+        (ActionIntent::OneTouchCombination, {
+            0.55 + profile.midfield_control * 0.15
+                + trait_strength(snap, "OneTouchSpecialist") * 0.90
+                + trait_strength(snap, "TeamPlayer") * 0.25
+                + if context.under_pressure { 0.20 } else { 0.0 }
+        }),
+        (ActionIntent::DelayedRelease, {
+            0.45 + profile.buildup_retain * 0.10
+                + trait_strength(snap, "DelayedPasser") * 0.95
+                + trait_strength(snap, "TempoManipulator") * 0.45
+                + trait_strength(snap, "RiskCalibrator") * 0.35
+                + if context.protecting_lead { 0.18 } else { 0.0 }
+        }),
+        (ActionIntent::ProgressiveCarry, {
+            0.55 + profile.attack_intent * 0.10
+                + trait_strength(snap, "Dribbler") * 0.35
+                + trait_strength(snap, "ChannelDrifter") * 0.45
+                + trait_strength(snap, "ChaosCreator") * 0.28
+                + if context.chasing_game { 0.18 } else { 0.0 }
+        }),
+        (ActionIntent::ThirdManLayoff, {
+            0.35 + profile.midfield_control * 0.15
+                + trait_strength(snap, "SpaceMagnet") * 0.30
+                + trait_strength(snap, "DecoyMover") * 0.45
+                + trait_strength(snap, "Playmaker") * 0.20
+                + if context.in_transition { 0.12 } else { 0.0 }
+        }),
+        (ActionIntent::PressEscapeTurn, {
+            0.25 + profile.transition_directness * 0.08
+                + trait_strength(snap, "PressBaiter") * 0.35
+                + trait_strength(snap, "DisguisedFirstTouch") * 0.45
+                + trait_strength(snap, "RecoveryTouch") * 0.30
+                + if context.under_pressure { 0.45 } else { 0.0 }
+        }),
+    ];
+
+    weights[weighted_index(
+        &weights
+            .iter()
+            .map(|(_, weight)| *weight)
+            .collect::<Vec<_>>(),
+        rng,
+    )]
+    .0
+}
+
+pub(crate) fn choose_attacking_intent<R: Rng>(
+    snap: &PlayerSnap,
+    style: PlayStyle,
+    context: IntentContext,
+    rng: &mut R,
+) -> ActionIntent {
+    let profile = style_profile(style);
+    let weights = vec![
+        (ActionIntent::LinkPlaySlip, {
+            0.50 + profile.attack_intent * 0.10
+                + trait_strength(snap, "Playmaker") * 0.28
+                + trait_strength(snap, "DelayedPasser") * 0.28
+                + if matches!(
+                    snap.role,
+                    TacticalRole::LinkForward | TacticalRole::AdvancedPlaymaker
+                ) {
+                    0.35
+                } else {
+                    0.0
+                }
+        }),
+        (ActionIntent::DirectDribble, {
+            0.55 + profile.attack_intent * 0.08
+                + trait_strength(snap, "Dribbler") * 0.45
+                + trait_strength(snap, "ChaosCreator") * 0.25
+                + trait_strength(snap, "NutmegOpportunist") * 0.20
+                + if context.chasing_game { 0.15 } else { 0.0 }
+        }),
+        (ActionIntent::BlindSideRun, {
+            0.30 + profile.transition_directness * 0.10
+                + trait_strength(snap, "BlindSideRunner") * 0.95
+                + trait_strength(snap, "TransitionAnticipator") * 0.25
+                + if context.in_transition { 0.35 } else { 0.0 }
+        }),
+        (ActionIntent::LateBoxDelivery, {
+            0.28 + profile.attack_intent * 0.08
+                + trait_strength(snap, "LateBoxArriver") * 0.60
+                + trait_strength(snap, "FarPostGhost") * 0.25
+                + trait_strength(snap, "DecoyMover") * 0.25
+        }),
+        (ActionIntent::NearPostAttack, {
+            0.22 + profile.attack_intent * 0.10
+                + trait_strength(snap, "NearPostHunter") * 0.90
+                + trait_strength(snap, "ChannelDrifter") * 0.20
+                + if context.in_transition { 0.12 } else { 0.0 }
+        }),
+    ];
+
+    weights[weighted_index(
+        &weights
+            .iter()
+            .map(|(_, weight)| *weight)
+            .collect::<Vec<_>>(),
+        rng,
+    )]
+    .0
+}
+
+pub(crate) fn choose_defensive_intent<R: Rng>(
+    snap: &PlayerSnap,
+    style: PlayStyle,
+    context: IntentContext,
+    rng: &mut R,
+) -> ActionIntent {
+    let profile = style_profile(style);
+    let weights = vec![
+        (ActionIntent::StepInInterception, {
+            0.55 + profile.press_intensity * 0.12
+                + trait_strength(snap, "PassingLaneThief") * 0.95
+                + trait_strength(snap, "EarlyScanner") * 0.18
+        }),
+        (ActionIntent::ContainAndShowWide, {
+            0.45 + profile.defensive_solidity * 0.12
+                + trait_strength(snap, "ContainmentSpecialist") * 0.95
+                + trait_strength(snap, "BodyAngleManipulator") * 0.45
+                + if context.protecting_lead { 0.20 } else { 0.0 }
+        }),
+        (ActionIntent::TacticalFoulStop, {
+            0.12 + profile.press_intensity * 0.04
+                + trait_strength(snap, "TacticalFouler") * 0.95
+                + trait_strength(snap, "RefereeManipulator") * 0.18
+                + if context.in_transition { 0.55 } else { 0.0 }
+                + if context.chasing_game { 0.08 } else { 0.0 }
+        }),
+        (ActionIntent::AerialClearance, {
+            0.22 + profile.defensive_solidity * 0.08
+                + trait_strength(snap, "AerialGrappler") * 0.55
+                + trait_strength(snap, "SecondContactWinner") * 0.25
+        }),
+    ];
+
+    weights[weighted_index(
+        &weights
+            .iter()
+            .map(|(_, weight)| *weight)
+            .collect::<Vec<_>>(),
+        rng,
+    )]
+    .0
+}
+
+pub(crate) fn choose_goalkeeper_distribution_intent<R: Rng>(
+    snap: &PlayerSnap,
+    style: PlayStyle,
+    context: IntentContext,
+    rng: &mut R,
+) -> ActionIntent {
+    let profile = style_profile(style);
+    let weights = vec![
+        (ActionIntent::SecureClaim, {
+            1.0 + profile.buildup_retain * 0.25
+                + trait_strength(snap, "SafeHands") * 0.20
+                + if context.protecting_lead { 0.18 } else { 0.0 }
+        }),
+        (ActionIntent::LaunchThrow, {
+            0.35 + profile.transition_directness * 0.22
+                + trait_strength(snap, "ThrowLauncher") * 1.10
+                + trait_strength(snap, "TransitionAnticipator") * 0.18
+                + if context.in_transition { 0.30 } else { 0.0 }
+                + if context.chasing_game { 0.12 } else { 0.0 }
+        }),
+    ];
+
+    weights[weighted_index(
+        &weights
+            .iter()
+            .map(|(_, weight)| *weight)
+            .collect::<Vec<_>>(),
+        rng,
+    )]
+    .0
 }
 
 // ---------------------------------------------------------------------------
@@ -452,7 +1079,286 @@ pub(crate) fn player_action_weight(
         }
     };
 
-    (role_skill * position_fit).max(1.0)
+    let trait_fit = trait_involvement_modifier(player, preferred);
+    let tactical_fit = tactical_role_involvement_modifier(player.role, preferred);
+
+    (role_skill * position_fit * trait_fit * tactical_fit).max(1.0)
+}
+
+pub(crate) fn trait_involvement_modifier(
+    player: &PlayerData,
+    preferred: crate::types::Position,
+) -> f64 {
+    use crate::types::Position;
+
+    let snap = PlayerSnap::from(player);
+    let bonus = match preferred {
+        Position::Goalkeeper => sum_trait_weights(
+            &snap,
+            &[
+                ("SafeHands", 0.06),
+                ("CatReflexes", 0.06),
+                ("AerialDominance", 0.04),
+                ("LineDictator", 0.04),
+                ("TrafficCommander", 0.04),
+                ("ThrowLauncher", 0.03),
+            ],
+        ),
+        Position::Defender => sum_trait_weights(
+            &snap,
+            &[
+                ("Rock", 0.06),
+                ("BallWinner", 0.04),
+                ("ContainmentSpecialist", 0.05),
+                ("RecoverySprinter", 0.04),
+                ("PassingLaneThief", 0.05),
+                ("BodyAngleManipulator", 0.04),
+                ("AerialGrappler", 0.05),
+                ("SecondContactWinner", 0.03),
+                ("EarlyScanner", 0.02),
+            ],
+        ),
+        Position::Midfielder => sum_trait_weights(
+            &snap,
+            &[
+                ("Playmaker", 0.06),
+                ("Visionary", 0.05),
+                ("Engine", 0.04),
+                ("TeamPlayer", 0.04),
+                ("EarlyScanner", 0.04),
+                ("TempoManipulator", 0.05),
+                ("RiskCalibrator", 0.04),
+                ("SpaceMagnet", 0.05),
+                ("TransitionAnticipator", 0.03),
+                ("LateBoxArriver", 0.03),
+            ],
+        ),
+        Position::Forward => sum_trait_weights(
+            &snap,
+            &[
+                ("Sharpshooter", 0.06),
+                ("CompleteForward", 0.05),
+                ("BlindSideRunner", 0.06),
+                ("NearPostHunter", 0.04),
+                ("FarPostGhost", 0.04),
+                ("ReboundInstinct", 0.04),
+                ("ChannelDrifter", 0.04),
+                ("ChaosCreator", 0.03),
+                ("KeeperDisruptor", 0.04),
+                ("ClutchExecutor", 0.03),
+            ],
+        ),
+    };
+
+    match (player.position, preferred) {
+        (Position::Defender, Position::Midfielder) if snap.has_trait("ChannelDrifter") => {
+            (1.0 + bonus + 0.03).clamp(0.96, 1.24)
+        }
+        (Position::Midfielder, Position::Forward) if snap.has_trait("LateBoxArriver") => {
+            (1.0 + bonus + 0.03).clamp(0.96, 1.24)
+        }
+        (Position::Forward, Position::Midfielder) if snap.has_trait("DecoyMover") => {
+            (1.0 + bonus + 0.02).clamp(0.96, 1.24)
+        }
+        _ => (1.0 + bonus).clamp(0.96, 1.24),
+    }
+}
+
+pub(crate) fn tactical_role_involvement_modifier(
+    role: TacticalRole,
+    preferred: crate::types::Position,
+) -> f64 {
+    use crate::types::Position;
+
+    match (role, preferred) {
+        (TacticalRole::Goalkeeper | TacticalRole::SweeperKeeper, Position::Goalkeeper) => 1.20,
+        (
+            TacticalRole::CenterBackStopper
+            | TacticalRole::CenterBackCover
+            | TacticalRole::CenterBackPlaymaker
+            | TacticalRole::FullBackSupport
+            | TacticalRole::WingBackAttack,
+            Position::Defender,
+        ) => 1.14,
+        (
+            TacticalRole::HoldingMidfielder
+            | TacticalRole::DeepPlaymaker
+            | TacticalRole::BoxToBoxMidfielder
+            | TacticalRole::AdvancedPlaymaker
+            | TacticalRole::WideProgressor,
+            Position::Midfielder,
+        ) => 1.14,
+        (
+            TacticalRole::Poacher
+            | TacticalRole::TargetForward
+            | TacticalRole::ChannelRunner
+            | TacticalRole::LinkForward,
+            Position::Forward,
+        ) => 1.14,
+        (TacticalRole::WingBackAttack, Position::Midfielder) => 1.06,
+        (TacticalRole::DeepPlaymaker | TacticalRole::AdvancedPlaymaker, Position::Forward) => 1.04,
+        (TacticalRole::ChannelRunner, Position::Midfielder) => 1.04,
+        _ => 0.99,
+    }
+}
+
+pub(crate) fn role_pass_bias(role: TacticalRole) -> f64 {
+    match role {
+        TacticalRole::CenterBackPlaymaker
+        | TacticalRole::DeepPlaymaker
+        | TacticalRole::AdvancedPlaymaker
+        | TacticalRole::LinkForward => 1.18,
+        TacticalRole::FullBackSupport
+        | TacticalRole::HoldingMidfielder
+        | TacticalRole::WideProgressor => 1.08,
+        TacticalRole::CenterBackStopper | TacticalRole::TargetForward => 0.94,
+        TacticalRole::Poacher => 0.86,
+        _ => 1.0,
+    }
+}
+
+pub(crate) fn role_carry_bias(role: TacticalRole) -> f64 {
+    match role {
+        TacticalRole::WingBackAttack
+        | TacticalRole::WideProgressor
+        | TacticalRole::ChannelRunner => 1.18,
+        TacticalRole::BoxToBoxMidfielder | TacticalRole::AdvancedPlaymaker => 1.08,
+        TacticalRole::CenterBackCover | TacticalRole::HoldingMidfielder => 0.92,
+        TacticalRole::TargetForward => 0.90,
+        _ => 1.0,
+    }
+}
+
+pub(crate) fn role_shot_bias(role: TacticalRole) -> f64 {
+    match role {
+        TacticalRole::Poacher | TacticalRole::TargetForward => 1.14,
+        TacticalRole::ChannelRunner => 1.08,
+        TacticalRole::AdvancedPlaymaker => 0.97,
+        TacticalRole::LinkForward => 0.93,
+        TacticalRole::HoldingMidfielder | TacticalRole::CenterBackCover => 0.82,
+        _ => 1.0,
+    }
+}
+
+pub(crate) fn role_clearance_bias(role: TacticalRole) -> f64 {
+    match role {
+        TacticalRole::CenterBackStopper | TacticalRole::CenterBackCover => 1.16,
+        TacticalRole::CenterBackPlaymaker | TacticalRole::SweeperKeeper => 0.88,
+        _ => 1.0,
+    }
+}
+
+pub(crate) fn role_press_bias(role: TacticalRole) -> f64 {
+    match role {
+        TacticalRole::WingBackAttack
+        | TacticalRole::BoxToBoxMidfielder
+        | TacticalRole::ChannelRunner => 1.12,
+        TacticalRole::HoldingMidfielder | TacticalRole::CenterBackCover => 0.96,
+        TacticalRole::Poacher => 0.92,
+        _ => 1.0,
+    }
+}
+
+pub(crate) fn trait_pass_bias(snap: &PlayerSnap) -> f64 {
+    (1.0 + sum_trait_weights(
+        snap,
+        &[
+            ("Playmaker", 0.07),
+            ("Visionary", 0.05),
+            ("EarlyScanner", 0.04),
+            ("TempoManipulator", 0.04),
+            ("DelayedPasser", 0.04),
+            ("RiskCalibrator", 0.03),
+            ("PressBaiter", 0.04),
+            ("OneTouchSpecialist", 0.03),
+            ("OutsideFootPasser", 0.03),
+            ("ThrowLauncher", 0.03),
+        ],
+    ))
+    .clamp(0.88, 1.22)
+}
+
+pub(crate) fn trait_carry_bias(snap: &PlayerSnap) -> f64 {
+    (1.0 + sum_trait_weights(
+        snap,
+        &[
+            ("Dribbler", 0.06),
+            ("Speedster", 0.04),
+            ("Agile", 0.03),
+            ("DisguisedFirstTouch", 0.04),
+            ("RecoveryTouch", 0.03),
+            ("ChannelDrifter", 0.05),
+            ("ChaosCreator", 0.04),
+            ("BounceRoomDribbler", 0.03),
+            ("NutmegOpportunist", 0.03),
+            ("BlindSideRunner", 0.02),
+        ],
+    ))
+    .clamp(0.88, 1.22)
+}
+
+pub(crate) fn trait_shot_bias(snap: &PlayerSnap) -> f64 {
+    (1.0 + sum_trait_weights(
+        snap,
+        &[
+            ("Sharpshooter", 0.06),
+            ("CompleteForward", 0.04),
+            ("ToePokeFinisher", 0.04),
+            ("HalfVolleyComfort", 0.03),
+            ("LateBoxArriver", 0.03),
+            ("NearPostHunter", 0.04),
+            ("BlindSideRunner", 0.04),
+            ("FarPostGhost", 0.03),
+            ("ReboundInstinct", 0.03),
+            ("ClutchExecutor", 0.03),
+        ],
+    ))
+    .clamp(0.84, 1.24)
+}
+
+pub(crate) fn trait_clearance_bias(snap: &PlayerSnap) -> f64 {
+    (1.0 + sum_trait_weights(
+        snap,
+        &[
+            ("Rock", 0.05),
+            ("ContainmentSpecialist", 0.03),
+            ("RecoverySprinter", 0.02),
+            ("BodyAngleManipulator", 0.04),
+            ("AerialGrappler", 0.05),
+            ("SecondContactWinner", 0.03),
+        ],
+    ) - sum_trait_weights(
+        snap,
+        &[
+            ("Playmaker", 0.03),
+            ("Visionary", 0.02),
+            ("ThrowLauncher", 0.02),
+        ],
+    ))
+    .clamp(0.84, 1.20)
+}
+
+pub(crate) fn trait_press_bias(snap: &PlayerSnap) -> f64 {
+    (1.0 + sum_trait_weights(
+        snap,
+        &[
+            ("BallWinner", 0.06),
+            ("Engine", 0.04),
+            ("Tireless", 0.03),
+            ("TransitionAnticipator", 0.04),
+            ("PassingLaneThief", 0.04),
+            ("TacticalFouler", 0.03),
+            ("KeeperDisruptor", 0.03),
+        ],
+    ) - sum_trait_weights(snap, &[("DelayedPasser", 0.02), ("TimeKiller", 0.03)]))
+    .clamp(0.88, 1.20)
+}
+
+fn sum_trait_weights(snap: &PlayerSnap, weighted_traits: &[(&str, f64)]) -> f64 {
+    weighted_traits
+        .iter()
+        .map(|(name, weight)| trait_strength(snap, name) * *weight)
+        .sum()
 }
 
 pub(crate) fn weighted_index<R: Rng>(weights: &[f64], rng: &mut R) -> usize {
