@@ -4,6 +4,11 @@ import { Badge, Button, Card, CountryFlag } from "./ui";
 import { GitCompareArrows } from "lucide-react";
 import { calcAge, calcOvr, positionBadgeVariant } from "../lib/helpers";
 import { normalisePosition, translatePositionLabel } from "./SquadTab.helpers";
+import {
+  tacticalRoleFitClassName,
+  tacticalRoleFitScore,
+  translateTacticalRoleLabel,
+} from "./tacticalRoles";
 
 const ATTRIBUTE_GROUPS: {
   labelKey: string;
@@ -38,8 +43,10 @@ const ATTRIBUTE_GROUPS: {
 interface TacticsPlayerFocusPanelProps {
   canConfirmSwap: boolean;
   comparePlayer: PlayerData | null;
+  comparePlayerRole: string | null;
   onConfirmSwap: () => void;
   selectedPlayer: PlayerData | null;
+  selectedPlayerRole: string | null;
 }
 
 function valueTone(value: number): string {
@@ -63,14 +70,19 @@ function getNormalizedPlayerPosition(player: PlayerData): string {
 function PlayerSummary({
   label,
   player,
+  tacticalRole,
 }: {
   label: string;
   player: PlayerData;
+  tacticalRole: string | null;
 }) {
   const { t } = useTranslation();
   const normalizedPosition = getNormalizedPlayerPosition(player);
   const displayPosition = player.natural_position || player.position;
   const overallRating = calcOvr(player, displayPosition);
+  const roleFitScore = tacticalRole
+    ? tacticalRoleFitScore(player, tacticalRole)
+    : null;
 
   return (
     <div className="rounded-xl border border-gray-200 dark:border-navy-600 bg-gray-50 dark:bg-navy-800/70 px-4 py-4">
@@ -86,6 +98,11 @@ function PlayerSummary({
             <Badge variant={positionBadgeVariant(normalizedPosition)} size="sm">
               {translatePositionLabel(t, displayPosition)}
             </Badge>
+            {tacticalRole ? (
+              <Badge variant="neutral" size="sm">
+                {translateTacticalRoleLabel(t, tacticalRole)}
+              </Badge>
+            ) : null}
             <span className="text-xs text-gray-500 dark:text-gray-400">
               <CountryFlag
                 code={player.nationality}
@@ -102,6 +119,15 @@ function PlayerSummary({
           <div className="text-3xl font-heading font-bold text-primary-500 dark:text-primary-400">
             {overallRating}
           </div>
+          {roleFitScore !== null ? (
+            <div
+              className={`mt-1 text-xs font-heading font-bold uppercase tracking-wider ${tacticalRoleFitClassName(
+                roleFitScore,
+              )}`}
+            >
+              {t("tactics.roleFit", "Role fit")} {roleFitScore}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
@@ -124,7 +150,7 @@ function SinglePlayerAttributes({ player }: { player: PlayerData }) {
           </h4>
           <div className="space-y-2">
             {group.attrs.map((attr) => {
-              const value = player.attributes[attr];
+              const value = player.attributes[attr] ?? 50;
               return (
                 <div
                   key={attr}
@@ -159,13 +185,17 @@ function SinglePlayerAttributes({ player }: { player: PlayerData }) {
 function CompareAttributes({
   canConfirmSwap,
   comparePlayer,
+  comparePlayerRole,
   onConfirmSwap,
   selectedPlayer,
+  selectedPlayerRole,
 }: {
   canConfirmSwap: boolean;
   comparePlayer: PlayerData;
+  comparePlayerRole: string | null;
   onConfirmSwap: () => void;
   selectedPlayer: PlayerData;
+  selectedPlayerRole: string | null;
 }) {
   const { t } = useTranslation();
   const showGoalkeeperAttrs =
@@ -178,10 +208,12 @@ function CompareAttributes({
         <PlayerSummary
           label={t("tactics.selectedPlayer", "Selected player")}
           player={selectedPlayer}
+          tacticalRole={selectedPlayerRole}
         />
         <PlayerSummary
           label={t("tactics.comparePlayer", "Comparison player")}
           player={comparePlayer}
+          tacticalRole={comparePlayerRole}
         />
       </div>
       <div className="flex flex-col gap-3 rounded-xl border border-gray-200 dark:border-navy-600 bg-gray-50 dark:bg-navy-800/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -211,8 +243,8 @@ function CompareAttributes({
           </h4>
           <div className="space-y-2">
             {group.attrs.map((attr) => {
-              const left = selectedPlayer.attributes[attr];
-              const right = comparePlayer.attributes[attr];
+              const left = selectedPlayer.attributes[attr] ?? 50;
+              const right = comparePlayer.attributes[attr] ?? 50;
               const leftWins = left > right;
               const rightWins = right > left;
               return (
@@ -270,8 +302,10 @@ function CompareAttributes({
 export default function TacticsPlayerFocusPanel({
   canConfirmSwap,
   comparePlayer,
+  comparePlayerRole,
   onConfirmSwap,
   selectedPlayer,
+  selectedPlayerRole,
 }: TacticsPlayerFocusPanelProps) {
   const { t } = useTranslation();
 
@@ -289,14 +323,17 @@ export default function TacticsPlayerFocusPanel({
             <CompareAttributes
               canConfirmSwap={canConfirmSwap}
               comparePlayer={comparePlayer}
+              comparePlayerRole={comparePlayerRole}
               onConfirmSwap={onConfirmSwap}
               selectedPlayer={selectedPlayer}
+              selectedPlayerRole={selectedPlayerRole}
             />
           ) : (
             <div className="space-y-4">
               <PlayerSummary
                 label={t("tactics.selectedPlayer", "Selected player")}
                 player={selectedPlayer}
+                tacticalRole={selectedPlayerRole}
               />
               <div className="rounded-xl border border-dashed border-gray-200 dark:border-navy-600 px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
                 {t(

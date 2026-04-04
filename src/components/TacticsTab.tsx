@@ -31,6 +31,7 @@ import TacticsPlayerFocusPanel from "./TacticsPlayerFocusPanel";
 import TacticsPlayerTable from "./TacticsPlayerTable";
 import TacticsRolesPanel from "./TacticsRolesPanel";
 import TacticsSetupPanel from "./TacticsSetupPanel";
+import { resolveTacticalRoles } from "./tacticalRoles";
 
 interface TacticsTabProps {
   gameState: GameStateData;
@@ -122,6 +123,21 @@ export default function TacticsTab({
     () => buildPitchSlotRows(pitchRows, startingXiIds, playersById),
     [pitchRows, playersById, startingXiIds],
   );
+  const tacticalRoles = useMemo(
+    () => resolveTacticalRoles(formation, pitchSlotRows, myTeam.tactical_roles),
+    [formation, pitchSlotRows, (myTeam.tactical_roles || []).join(",")],
+  );
+  const tacticalRolesByPlayerId = useMemo(() => {
+    const map = new Map<string, string>();
+    pitchSlotRows.forEach((row) => {
+      row.slots.forEach((slot) => {
+        if (slot.player) {
+          map.set(slot.player.id, tacticalRoles[slot.index]);
+        }
+      });
+    });
+    return map;
+  }, [pitchSlotRows, tacticalRoles]);
 
   const xiIds = new Set(startingXiIds);
   const bench = roster.filter((player) => !xiIds.has(player.id));
@@ -478,15 +494,22 @@ export default function TacticsTab({
               pitchSlotRows={pitchSlotRows}
               selectedPlayer={selectedPlayer}
               selectedPlayerId={selectedPlayerId}
+              tacticalRoles={tacticalRoles}
             />
 
             <div className="flex flex-col gap-4">
               <TacticsPlayerFocusPanel
                 canConfirmSwap={canConfirmSwap}
+                comparePlayerRole={
+                  comparePlayer ? tacticalRolesByPlayerId.get(comparePlayer.id) ?? null : null
+                }
                 onConfirmSwap={() => {
                   void handleConfirmSwap();
                 }}
                 selectedPlayer={selectedPlayer}
+                selectedPlayerRole={
+                  selectedPlayer ? tacticalRolesByPlayerId.get(selectedPlayer.id) ?? null : null
+                }
                 comparePlayer={comparePlayer}
               />
               <TacticsSetupPanel
@@ -524,6 +547,7 @@ export default function TacticsTab({
             title={t("preMatch.startingXI", "Starting XI")}
             toggleSort={toggleSort}
             totalCount={startingXI.length}
+            tacticalRolesByPlayerId={tacticalRolesByPlayerId}
             xiActivePosition={xiActivePosition}
           />
 
@@ -541,15 +565,19 @@ export default function TacticsTab({
             title={t("preMatch.substitutes", "Substitutes")}
             toggleSort={toggleSort}
             totalCount={bench.length}
+            tacticalRolesByPlayerId={tacticalRolesByPlayerId}
             xiActivePosition={xiActivePosition}
           />
         </>
       ) : (
         <TacticsRolesPanel
           allSquad={roster}
+          formation={formation}
           matchRoles={myTeam.match_roles}
           onGameUpdate={onGameUpdate}
+          pitchSlotRows={pitchSlotRows}
           startingPlayers={startingXI}
+          tacticalRoles={tacticalRoles}
         />
       )}
     </div>

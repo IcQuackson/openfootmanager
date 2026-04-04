@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { calcOvr } from "../lib/helpers";
 import type { PlayerData } from "../store/gameStore";
 import { Badge, Card } from "./ui";
+import { tacticalRoleAbbreviation } from "./tacticalRoles";
 import {
   getPitchRowWidth,
   getPitchSlotWidth,
@@ -37,6 +38,7 @@ interface TacticsPitchProps {
   pitchSlotRows: PitchSlotRow[];
   selectedPlayer: PlayerData | null;
   selectedPlayerId: string | null;
+  tacticalRoles: string[];
 }
 
 function getPitchPlayerButtonClassName(options: {
@@ -164,6 +166,7 @@ export default function TacticsPitch({
   pitchSlotRows,
   selectedPlayer,
   selectedPlayerId,
+  tacticalRoles,
 }: TacticsPitchProps): JSX.Element {
   const { t } = useTranslation();
 
@@ -231,6 +234,7 @@ export default function TacticsPitch({
                 const slotRating = player
                   ? calcOvr(player, slot.position)
                   : null;
+                const tacticalRole = tacticalRoles[slot.index];
 
                 return (
                   <div
@@ -268,6 +272,9 @@ export default function TacticsPitch({
                         </div>
                         <div className="text-[9px] font-heading font-bold uppercase tracking-wider leading-none text-white/70">
                           {translatePositionAbbreviation(t, slot.position)}
+                        </div>
+                        <div className="mt-1 text-[9px] font-heading font-bold uppercase tracking-wider leading-none text-accent-200">
+                          {tacticalRoleAbbreviation(tacticalRole)}
                         </div>
                         <div className="mt-1 truncate text-[10px] font-semibold leading-tight text-white sm:text-[11px]">
                           {player.match_name}

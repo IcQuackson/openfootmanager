@@ -743,6 +743,7 @@ mod tests {
             aggression: 50,
             teamwork: 65,
             leadership: 50,
+            professionalism: 50,
             handling: if is_goalkeeper { 75 } else { 20 },
             reflexes: if is_goalkeeper { 75 } else { 20 },
             aerial: 60,

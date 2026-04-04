@@ -191,6 +191,7 @@ pub(super) fn generate_random_player_from_def(
         aggression: rng.gen_range(30..90),
         teamwork: rng.gen_range(45..95),
         leadership: rng.gen_range(30..90),
+        professionalism: rng.gen_range(35..95),
         handling: if is_gk {
             rng.gen_range(50..95)
         } else {

@@ -1,9 +1,53 @@
 use log::info;
 use tauri::State;
 
-use domain::team::default_tactical_roles_for_formation;
+use domain::player::{
+    trait_is_learnable, PlayerPositionTrainingGoal, PlayerTrait, PlayerTraitTrainingGoal, Position,
+    TraitTrainingMode,
+};
+use domain::team::{default_tactical_roles_for_formation, TacticalRole};
 use ofm_core::game::Game;
 use ofm_core::state::StateManager;
+
+fn parse_tactical_role(role: &str) -> Result<TacticalRole, String> {
+    match role {
+        "Goalkeeper" => Ok(TacticalRole::Goalkeeper),
+        "SweeperKeeper" => Ok(TacticalRole::SweeperKeeper),
+        "CenterBackStopper" => Ok(TacticalRole::CenterBackStopper),
+        "CenterBackCover" => Ok(TacticalRole::CenterBackCover),
+        "CenterBackPlaymaker" => Ok(TacticalRole::CenterBackPlaymaker),
+        "FullBackSupport" => Ok(TacticalRole::FullBackSupport),
+        "WingBackAttack" => Ok(TacticalRole::WingBackAttack),
+        "HoldingMidfielder" => Ok(TacticalRole::HoldingMidfielder),
+        "DeepPlaymaker" => Ok(TacticalRole::DeepPlaymaker),
+        "BoxToBoxMidfielder" => Ok(TacticalRole::BoxToBoxMidfielder),
+        "AdvancedPlaymaker" => Ok(TacticalRole::AdvancedPlaymaker),
+        "WideProgressor" => Ok(TacticalRole::WideProgressor),
+        "Poacher" => Ok(TacticalRole::Poacher),
+        "TargetForward" => Ok(TacticalRole::TargetForward),
+        "ChannelRunner" => Ok(TacticalRole::ChannelRunner),
+        "LinkForward" => Ok(TacticalRole::LinkForward),
+        _ => Err(format!("Unsupported tactical role: {}", role)),
+    }
+}
+
+fn parse_player_trait(raw: &str) -> Result<PlayerTrait, String> {
+    let json = format!("\"{}\"", raw);
+    serde_json::from_str(&json).map_err(|_| format!("Unsupported trait: {}", raw))
+}
+
+fn parse_position(raw: &str) -> Result<Position, String> {
+    let json = format!("\"{}\"", raw);
+    serde_json::from_str(&json).map_err(|_| format!("Unsupported position: {}", raw))
+}
+
+fn parse_trait_training_mode(raw: &str) -> Result<TraitTrainingMode, String> {
+    match raw {
+        "Learn" => Ok(TraitTrainingMode::Learn),
+        "Unlearn" => Ok(TraitTrainingMode::Unlearn),
+        _ => Err(format!("Unsupported trait training mode: {}", raw)),
+    }
+}
 
 #[tauri::command]
 pub fn set_formation(state: State<'_, StateManager>, formation: String) -> Result<Game, String> {
@@ -158,6 +202,43 @@ pub fn set_team_match_roles(
 }
 
 #[tauri::command]
+pub fn set_tactical_roles(
+    state: State<'_, StateManager>,
+    tactical_roles: Vec<String>,
+) -> Result<Game, String> {
+    info!("[cmd] set_tactical_roles: {} roles", tactical_roles.len());
+    let mut game = state
+        .get_game(|g| g.clone())
+        .ok_or("No active game session".to_string())?;
+
+    let team_id = game
+        .manager
+        .team_id
+        .clone()
+        .ok_or("No team assigned".to_string())?;
+
+    let parsed_roles: Result<Vec<TacticalRole>, String> = tactical_roles
+        .iter()
+        .map(|role| parse_tactical_role(role))
+        .collect();
+    let parsed_roles = parsed_roles?;
+
+    if parsed_roles.len() != 11 {
+        return Err(format!(
+            "Expected 11 tactical roles, received {}",
+            parsed_roles.len()
+        ));
+    }
+
+    if let Some(team) = game.teams.iter_mut().find(|t| t.id == team_id) {
+        team.tactical_roles = parsed_roles;
+    }
+
+    state.set_game(game.clone());
+    Ok(game)
+}
+
+#[tauri::command]
 pub fn set_training(
     state: State<'_, StateManager>,
     focus: String,
@@ -286,6 +367,142 @@ pub fn set_player_training_focus(
         player.training_focus = training_focus;
     } else {
         return Err(format!("Player not found: {}", player_id));
+    }
+
+    state.set_game(game.clone());
+    Ok(game)
+}
+
+#[tauri::command]
+pub fn set_player_trait_training_goal(
+    state: State<'_, StateManager>,
+    player_id: String,
+    mode: Option<String>,
+    trait_name: Option<String>,
+) -> Result<Game, String> {
+    info!(
+        "[cmd] set_player_trait_training_goal: player={}, mode={:?}, trait={:?}",
+        player_id, mode, trait_name
+    );
+    let mut game = state
+        .get_game(|g| g.clone())
+        .ok_or("No active game session".to_string())?;
+
+    let team_id = game
+        .manager
+        .team_id
+        .clone()
+        .ok_or("No team assigned".to_string())?;
+
+    let player = game
+        .players
+        .iter_mut()
+        .find(|p| p.id == player_id)
+        .ok_or_else(|| format!("Player not found: {}", player_id))?;
+
+    if player.team_id.as_deref() != Some(&team_id) {
+        return Err("Cannot modify development for a player outside your squad".to_string());
+    }
+
+    match (mode, trait_name) {
+        (Some(mode_raw), Some(trait_raw)) => {
+            let parsed_mode = parse_trait_training_mode(&mode_raw)?;
+            let parsed_trait = parse_player_trait(&trait_raw)?;
+
+            if !trait_is_learnable(&parsed_trait) {
+                return Err(format!(
+                    "Trait {} is innate-only and cannot be trained directly",
+                    trait_raw
+                ));
+            }
+
+            match parsed_mode {
+                TraitTrainingMode::Learn => {
+                    if player.traits.contains(&parsed_trait) {
+                        return Err(format!("Player already has trait {}", trait_raw));
+                    }
+                }
+                TraitTrainingMode::Unlearn => {
+                    if !player.traits.contains(&parsed_trait) {
+                        return Err(format!(
+                            "Player does not currently have trait {}",
+                            trait_raw
+                        ));
+                    }
+                }
+            }
+
+            player.development_plan.trait_goal = Some(PlayerTraitTrainingGoal {
+                target_trait: parsed_trait,
+                mode: parsed_mode,
+                progress: 0.0,
+                completed_sessions: 0,
+            });
+        }
+        (None, None) => {
+            player.development_plan.trait_goal = None;
+        }
+        _ => {
+            return Err(
+                "Provide both mode and trait_name, or provide neither to clear the goal"
+                    .to_string(),
+            );
+        }
+    }
+
+    state.set_game(game.clone());
+    Ok(game)
+}
+
+#[tauri::command]
+pub fn set_player_position_training_goal(
+    state: State<'_, StateManager>,
+    player_id: String,
+    position: Option<String>,
+) -> Result<Game, String> {
+    info!(
+        "[cmd] set_player_position_training_goal: player={}, position={:?}",
+        player_id, position
+    );
+    let mut game = state
+        .get_game(|g| g.clone())
+        .ok_or("No active game session".to_string())?;
+
+    let team_id = game
+        .manager
+        .team_id
+        .clone()
+        .ok_or("No team assigned".to_string())?;
+
+    let player = game
+        .players
+        .iter_mut()
+        .find(|p| p.id == player_id)
+        .ok_or_else(|| format!("Player not found: {}", player_id))?;
+
+    if player.team_id.as_deref() != Some(&team_id) {
+        return Err("Cannot modify development for a player outside your squad".to_string());
+    }
+
+    if let Some(position_raw) = position {
+        let parsed_position = parse_position(&position_raw)?;
+
+        if parsed_position == player.natural_position
+            || player
+                .alternate_positions
+                .iter()
+                .any(|known| known == &parsed_position)
+        {
+            return Err(format!("Player already knows position {}", position_raw));
+        }
+
+        player.development_plan.position_goal = Some(PlayerPositionTrainingGoal {
+            target_position: parsed_position,
+            progress: 0.0,
+            completed_sessions: 0,
+        });
+    } else {
+        player.development_plan.position_goal = None;
     }
 
     state.set_game(game.clone());

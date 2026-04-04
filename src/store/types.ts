@@ -109,6 +109,24 @@ export interface PlayerMatchStatsEntry {
   rating: number;
 }
 
+export interface PlayerTraitTrainingGoalData {
+  target_trait: string;
+  mode: "Learn" | "Unlearn";
+  progress: number;
+  completed_sessions: number;
+}
+
+export interface PlayerPositionTrainingGoalData {
+  target_position: string;
+  progress: number;
+  completed_sessions: number;
+}
+
+export interface PlayerDevelopmentPlanData {
+  trait_goal: PlayerTraitTrainingGoalData | null;
+  position_goal: PlayerPositionTrainingGoalData | null;
+}
+
 export interface PlayerData {
   id: string;
   match_name: string;
@@ -138,6 +156,7 @@ export interface PlayerData {
     aggression: number;
     teamwork: number;
     leadership: number;
+    professionalism?: number;
     handling: number;
     reflexes: number;
     aerial: number;
@@ -155,7 +174,9 @@ export interface PlayerData {
   transfer_listed: boolean;
   loan_listed: boolean;
   transfer_offers: TransferOfferData[];
+  badges?: string[];
   traits: string[];
+  development_plan?: PlayerDevelopmentPlanData;
 }
 
 export interface TransferOfferData {

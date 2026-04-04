@@ -12,8 +12,15 @@ import TacticsTab from "./TacticsTab";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, fallback?: string | Record<string, unknown>) =>
-      typeof fallback === "string" ? fallback : key,
+    t: (
+      key: string,
+      fallback?: string | { defaultValue?: string } | Record<string, unknown>,
+    ) =>
+      typeof fallback === "string"
+        ? fallback
+        : typeof fallback === "object" && fallback?.defaultValue
+          ? fallback.defaultValue
+          : key,
     i18n: { language: "en" },
   }),
 }));
@@ -341,10 +348,10 @@ describe("TacticsTab", () => {
     const benchCard = screen.getByTestId("pitch-bench-player-d5");
 
     expect(
-      within(benchCard).getByText("common.posAbbr.Defender"),
+      within(benchCard).getByText("DEF"),
     ).toBeInTheDocument();
     expect(
-      within(benchCard).queryByText("common.posAbbr.Midfielder"),
+      within(benchCard).queryByText("MID"),
     ).not.toBeInTheDocument();
   });
 
@@ -359,8 +366,7 @@ describe("TacticsTab", () => {
 
     fireEvent.click(screen.getByTestId("pitch-player-f1"));
 
-    expect(screen.getByText("common.positions.Forward")).toBeInTheDocument();
-    expect(screen.queryByText("Forward")).not.toBeInTheDocument();
+    expect(screen.getByText("Forward")).toBeInTheDocument();
   });
 
   it("allows selecting a bench player from the pitch view and swapping them with a starter", async () => {
@@ -508,6 +514,27 @@ describe("TacticsTab", () => {
           free_kick_taker: expect.any(String),
           corner_taker: expect.any(String),
         }),
+      });
+    });
+  });
+
+  it("persists tactical role assignments from the roles tab", async () => {
+    render(
+      <TacticsTab
+        gameState={makeGameState()}
+        onSelectPlayer={vi.fn()}
+        onGameUpdate={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Set pieces & roles" }));
+    fireEvent.change(screen.getByLabelText("Player d1 role"), {
+      target: { value: "WingBackAttack" },
+    });
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith("set_tactical_roles", {
+        tacticalRoles: expect.arrayContaining(["WingBackAttack"]),
       });
     });
   });

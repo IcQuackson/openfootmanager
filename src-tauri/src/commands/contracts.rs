@@ -219,6 +219,7 @@ mod tests {
             aggression: 60,
             teamwork: 60,
             leadership: 60,
+            professionalism: 50,
             handling: 30,
             reflexes: 30,
             aerial: 60,

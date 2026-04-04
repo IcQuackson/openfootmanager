@@ -526,8 +526,8 @@ export default function SquadRosterView({
                         {player.morale}
                       </td>
                       <td className="py-2.5 px-4">
-                        {player.traits && player.traits.length > 0 ? (
-                          <TraitList traits={player.traits} size="xs" max={2} />
+                        {(player.badges || []).length > 0 ? (
+                          <TraitList traits={player.badges || []} size="xs" max={2} />
                         ) : (
                           <span className="text-xs text-gray-500">—</span>
                         )}

@@ -6,6 +6,7 @@ import { calcAge, calcOvr, positionBadgeVariant } from "../lib/helpers";
 import type { PlayerData } from "../store/gameStore";
 import { TraitList } from "./TraitBadge";
 import { getOverallRatingClassName, type SortKey } from "./TacticsTab.helpers";
+import { translateTacticalRoleLabel } from "./tacticalRoles";
 import { Badge, Card, ProgressBar } from "./ui";
 import {
   getPreferredPositions,
@@ -26,6 +27,7 @@ interface TacticsPlayerTableProps {
   title: string;
   toggleSort: (key: SortKey) => void;
   totalCount: number;
+  tacticalRolesByPlayerId: Map<string, string>;
   xiActivePosition: Map<string, string>;
 }
 
@@ -93,6 +95,7 @@ function renderTableRow(props: {
   onSelectPlayer: (playerId: string) => void;
   player: PlayerData;
   section: SquadSection;
+  tacticalRolesByPlayerId: Map<string, string>;
   xiActivePosition: Map<string, string>;
 }): JSX.Element {
   const {
@@ -100,6 +103,7 @@ function renderTableRow(props: {
     onSelectPlayer,
     player,
     section,
+    tacticalRolesByPlayerId,
     xiActivePosition,
   } = props;
   const { t } = useTranslation();
@@ -112,6 +116,8 @@ function renderTableRow(props: {
   const isWrongPosition =
     section === "xi" && isPlayerOutOfPosition(player, activePosition);
   const overallRating = calcOvr(player, activePosition);
+  const tacticalRole =
+    section === "xi" ? tacticalRolesByPlayerId.get(player.id) ?? null : null;
 
   return (
     <tr
@@ -166,8 +172,15 @@ function renderTableRow(props: {
         {player.morale}
       </td>
       <td className="px-4 py-2.5">
-        {player.traits.length > 0 ? (
-          <TraitList traits={player.traits} size="xs" max={2} />
+        {(player.badges || []).length > 0 ? (
+          <TraitList traits={player.badges || []} size="xs" max={2} />
+        ) : (
+          <span className="text-xs text-gray-500">—</span>
+        )}
+      </td>
+      <td className="px-4 py-2.5 text-sm text-gray-600 dark:text-gray-300">
+        {tacticalRole ? (
+          translateTacticalRoleLabel(t, tacticalRole)
         ) : (
           <span className="text-xs text-gray-500">—</span>
         )}
@@ -207,6 +220,7 @@ export default function TacticsPlayerTable({
   title,
   toggleSort,
   totalCount,
+  tacticalRolesByPlayerId,
   xiActivePosition,
 }: TacticsPlayerTableProps): JSX.Element {
   const { t } = useTranslation();
@@ -278,6 +292,9 @@ export default function TacticsPlayerTable({
               <th className="px-4 py-2.5 font-heading font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
                 {t("squad.traits")}
               </th>
+              <th className="px-4 py-2.5 font-heading font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                {t("tactics.roleColumn", "Role")}
+              </th>
               <SortHeader
                 column="ovr"
                 label={t("common.ovr")}
@@ -297,6 +314,7 @@ export default function TacticsPlayerTable({
                 onSelectPlayer,
                 player,
                 section,
+                tacticalRolesByPlayerId,
                 xiActivePosition,
               }),
             )}

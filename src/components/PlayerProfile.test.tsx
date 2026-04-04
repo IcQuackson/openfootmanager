@@ -17,7 +17,16 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, params?: Record<string, string | number>) => {
+    t: (key: string, params?: any) => {
+      if (typeof params === "string") {
+        return params;
+      }
+      const defaultValue =
+        params &&
+        typeof params === "object" &&
+        "defaultValue" in params
+          ? params.defaultValue
+          : undefined;
       if (key === "common.back") return "Back";
       if (key === "common.contract") return "Contract";
       if (key === "common.renewContract") return "Renew Contract";
@@ -90,7 +99,7 @@ vi.mock("react-i18next", () => ({
       if (key === "playerProfile.careerHistory") return "Career History";
       if (key === "playerProfile.noCareer") return "No Career";
       if (key === "finances.wagePerWeek") return "Wage/wk";
-      return key;
+      return defaultValue ?? key;
     },
     i18n: { language: "en" },
   }),
@@ -135,6 +144,7 @@ function createTeam(overrides: Partial<TeamData> = {}): TeamData {
     founded_year: 1900,
     colors: { primary: "#000000", secondary: "#ffffff" },
     starting_xi_ids: [],
+    tactical_roles: [],
     form: [],
     history: [],
     ...overrides,
@@ -861,5 +871,122 @@ describe("PlayerProfile contract surfaces", () => {
     const assistsRow = screen.getByText("Assists / 90").closest("div");
     expect(assistsRow).not.toBeNull();
     expect(within(assistsRow as HTMLElement).getByText("-")).toBeInTheDocument();
+  });
+
+  it("shows the current tactical role for a starter in the manager team", () => {
+    const player = createPlayer();
+    const gameState = createGameState(player);
+    gameState.teams[0] = createTeam({
+      starting_xi_ids: [
+        "player-1",
+        "d2",
+        "d3",
+        "d4",
+        "d5",
+        "m1",
+        "m2",
+        "m3",
+        "m4",
+        "f1",
+        "f2",
+      ],
+      tactical_roles: [
+        "LinkForward",
+        "FullBackSupport",
+        "CenterBackStopper",
+        "CenterBackStopper",
+        "FullBackSupport",
+        "WideProgressor",
+        "DeepPlaymaker",
+        "BoxToBoxMidfielder",
+        "WideProgressor",
+        "Poacher",
+        "TargetForward",
+      ],
+    });
+
+    render(
+      <PlayerProfile
+        player={player}
+        gameState={gameState}
+        isOwnClub
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Current role")).toBeInTheDocument();
+    expect(screen.getByText("Link Forward")).toBeInTheDocument();
+    expect(screen.getByText(/Role fit/i)).toBeInTheDocument();
+  });
+
+  it("renders badges separately from the dedicated traits section", () => {
+    const player = createPlayer({
+      badges: ["Sharpshooter", "Playmaker"],
+      traits: ["EarlyScanner", "PressBaiter"],
+    });
+
+    render(
+      <PlayerProfile
+        player={player}
+        gameState={createGameState(player)}
+        isOwnClub
+        onClose={vi.fn()}
+      />,
+    );
+
+    const traitsHeading = screen.getByText("Traits");
+    expect(traitsHeading).toBeInTheDocument();
+    expect(screen.getByText("Sharpshooter")).toBeInTheDocument();
+    expect(screen.getByText("Playmaker")).toBeInTheDocument();
+    expect(
+      screen.getByTitle(/Checks surroundings before receiving/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTitle(/Invites pressure deliberately to free teammates/i),
+    ).toBeInTheDocument();
+
+    const traitsCard = traitsHeading.closest("div")?.parentElement;
+    expect(traitsCard).not.toBeNull();
+    expect(
+      within(traitsCard as HTMLElement).getByTitle(
+        /Checks surroundings before receiving/i,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(traitsCard as HTMLElement).getByTitle(
+        /Invites pressure deliberately to free teammates/i,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("allows setting a trait development goal", async () => {
+    const player = createPlayer({ traits: ["EarlyScanner"] });
+    const updatedPlayer = createPlayer({
+      traits: ["EarlyScanner"],
+      development_plan: {
+        trait_goal: {
+          target_trait: "DelayedPasser",
+          mode: "Learn",
+          progress: 0,
+          completed_sessions: 0,
+        },
+        position_goal: null,
+      },
+    });
+
+    vi.mocked(invoke).mockResolvedValue(createGameState(updatedPlayer));
+
+    render(<RenewalHarness initialPlayer={player} />);
+    fireEvent.click(screen.getByRole("button", { name: "Set trait goal" }));
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        "set_player_trait_training_goal",
+        expect.objectContaining({
+          playerId: "player-1",
+          mode: "Learn",
+        }),
+      );
+    });
   });
 });

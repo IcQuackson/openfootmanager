@@ -299,7 +299,7 @@ export default function YouthAcademyTab({
                         </div>
                       </td>
                       <td className="py-2.5 px-4">
-                        <TraitList traits={player.traits || []} max={2} />
+                        <TraitList traits={player.badges || []} max={2} />
                       </td>
                       <td className="py-2.5 px-4 text-center">
                         <span

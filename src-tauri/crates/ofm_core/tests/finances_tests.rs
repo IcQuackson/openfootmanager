@@ -47,6 +47,7 @@ fn make_player(id: &str, team_id: &str, wage: u32) -> Player {
         aggression: 50,
         teamwork: 65,
         leadership: 50,
+        professionalism: 50,
         handling: 20,
         reflexes: 30,
         aerial: 60,

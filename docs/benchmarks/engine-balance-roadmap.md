@@ -391,6 +391,20 @@ Workflow:
 4. treat high-PPG systems with large fit gaps as healthier player-dependent systems
 5. inspect the ideal-fit counter tables before changing style or formation logic
 
+## Queued next items
+
+The next benchmark/reporting pass should cover these concrete follow-ups:
+
+1. commit the generated benchmark report files currently produced under `docs/benchmarks`
+2. tune generic-shape ordering for `4-4-2` and `3-5-2` without falling back to flat tactic-strength modifiers
+3. make `HighPress` counters more legible in the generated reports so the benchmark output explains not just that `HighPress` loses, but which systems and fit profiles are suppressing it
+
+Success criteria for this queued pass:
+
+- benchmark command scaffolding remains tracked, and the generated report outputs are intentionally versioned
+- generic-shape rankings better reflect the intended place of `4-4-2` and `3-5-2`
+- `HighPress` report sections include clearer counter relationships instead of forcing manual inspection of raw matchup tables
+
 ## Success criteria
 
 The balancing pass is considered successful when:

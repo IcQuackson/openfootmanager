@@ -143,6 +143,7 @@ mod tests {
             aggression: 50,
             teamwork: 65,
             leadership: 50,
+            professionalism: 50,
             handling: if is_gk { 75 } else { 20 },
             reflexes: if is_gk { 75 } else { 30 },
             aerial: 60,

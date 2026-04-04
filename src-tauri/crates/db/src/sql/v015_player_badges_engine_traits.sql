@@ -1,0 +1,1 @@
+ALTER TABLE players ADD COLUMN engine_traits TEXT NOT NULL DEFAULT '[]';

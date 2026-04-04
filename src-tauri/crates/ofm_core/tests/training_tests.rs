@@ -29,6 +29,7 @@ fn default_attrs() -> PlayerAttributes {
         aggression: 50,
         teamwork: 65,
         leadership: 50,
+        professionalism: 50,
         handling: 20,
         reflexes: 30,
         aerial: 60,

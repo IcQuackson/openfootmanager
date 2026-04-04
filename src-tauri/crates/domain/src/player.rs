@@ -38,7 +38,11 @@ pub struct Player {
     pub injury: Option<Injury>,
     pub team_id: Option<String>,
 
-    // Traits / flairs derived from attributes
+    // Old broad-profile badges derived from attributes for UI/scouting surfaces
+    #[serde(default)]
+    pub badges: Vec<PlayerBadge>,
+
+    // Engine-facing traits
     #[serde(default)]
     pub traits: Vec<PlayerTrait>,
 
@@ -61,6 +65,10 @@ pub struct Player {
     #[serde(default)]
     pub training_focus: Option<crate::team::TrainingFocus>,
 
+    // Long-term individual development plan (traits and position learning)
+    #[serde(default)]
+    pub development_plan: PlayerDevelopmentPlan,
+
     // Transfer status
     #[serde(default)]
     pub transfer_listed: bool,
@@ -70,6 +78,30 @@ pub struct Player {
     pub transfer_offers: Vec<TransferOffer>,
     #[serde(default)]
     pub morale_core: PlayerMoraleCore,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PlayerBadge {
+    Speedster,
+    Tank,
+    Agile,
+    Tireless,
+    Playmaker,
+    Sharpshooter,
+    Dribbler,
+    BallWinner,
+    Rock,
+    Leader,
+    CoolHead,
+    Visionary,
+    HotHead,
+    TeamPlayer,
+    SafeHands,
+    CatReflexes,
+    AerialDominance,
+    CompleteForward,
+    Engine,
+    SetPieceSpecialist,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -161,6 +193,8 @@ pub struct PlayerAttributes {
     pub teamwork: u8,
     #[serde(default = "default_attr")]
     pub leadership: u8,
+    #[serde(default = "default_attr")]
+    pub professionalism: u8,
 
     // Goalkeeper
     #[serde(default = "default_attr")]
@@ -395,31 +429,6 @@ pub enum TransferOfferStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PlayerTrait {
-    // Physical
-    Speedster, // pace >= 85
-    Tank,      // strength >= 85 && stamina >= 75
-    Agile,     // agility >= 85
-    Tireless,  // stamina >= 90
-    // Technical
-    Playmaker,    // passing >= 80 && vision >= 80
-    Sharpshooter, // shooting >= 85
-    Dribbler,     // dribbling >= 85
-    BallWinner,   // tackling >= 80 && aggression >= 70
-    Rock,         // defending >= 85 && positioning >= 75
-    // Mental
-    Leader,     // leadership >= 85 && teamwork >= 75
-    CoolHead,   // composure >= 85 && decisions >= 80
-    Visionary,  // vision >= 85
-    HotHead,    // aggression >= 85 && composure < 50
-    TeamPlayer, // teamwork >= 85
-    // Goalkeeper
-    SafeHands,       // handling >= 85 (GK only)
-    CatReflexes,     // reflexes >= 85 (GK only)
-    AerialDominance, // aerial >= 85
-    // Combo / Special
-    CompleteForward, // FWD: shooting >= 75 && dribbling >= 75 && pace >= 70 && strength >= 70
-    Engine,          // MID: stamina >= 85 && pace >= 70 && teamwork >= 75
-    SetPieceSpecialist, // passing >= 80 && shooting >= 75 && vision >= 75
     // Perceptual / cognitive
     EarlyScanner,
     BlindSideAwareness,
@@ -487,82 +496,196 @@ pub enum PlayerTrait {
     TrafficCommander,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TraitOrigin {
+    Innate,
+    Learnable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TraitTrainingMode {
+    Learn,
+    Unlearn,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerTraitTrainingGoal {
+    pub target_trait: PlayerTrait,
+    pub mode: TraitTrainingMode,
+    pub progress: f32,
+    pub completed_sessions: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerPositionTrainingGoal {
+    pub target_position: Position,
+    pub progress: f32,
+    pub completed_sessions: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct PlayerDevelopmentPlan {
+    pub trait_goal: Option<PlayerTraitTrainingGoal>,
+    pub position_goal: Option<PlayerPositionTrainingGoal>,
+}
+
+impl Default for TraitTrainingMode {
+    fn default() -> Self {
+        Self::Learn
+    }
+}
+
+pub fn trait_origin(trait_kind: &PlayerTrait) -> TraitOrigin {
+    use PlayerTrait as T;
+    match trait_kind {
+        T::EarlyScanner => TraitOrigin::Learnable,
+        T::BlindSideAwareness
+        | T::SpaceMagnet
+        | T::ToePokeFinisher
+        | T::BounceTechnician
+        | T::RecoveryTouch
+        | T::BlindSideRunner
+        | T::ReboundInstinct
+        | T::PassingLaneThief
+        | T::BigMatchRiser
+        | T::BigMatchShrinker
+        | T::MomentumPlayer
+        | T::CrowdReactive
+        | T::Provocable
+        | T::PainMasker
+        | T::ClutchExecutor
+        | T::ChaosCreator
+        | T::NutmegOpportunist
+        | T::BounceRoomDribbler
+        | T::BreakawayHypnotist
+        | T::TrafficCommander => TraitOrigin::Innate,
+        T::TempoManipulator
+        | T::DelayedPasser
+        | T::RiskCalibrator
+        | T::PressBaiter
+        | T::TransitionAnticipator
+        | T::OneTouchSpecialist
+        | T::OutsideFootPasser
+        | T::DisguisedFirstTouch
+        | T::AerialRedirection
+        | T::HalfVolleyComfort
+        | T::LateBoxArriver
+        | T::NearPostHunter
+        | T::DecoyMover
+        | T::SecondBallPredator
+        | T::StaticLure
+        | T::ChannelDrifter
+        | T::FarPostGhost
+        | T::ContainmentSpecialist
+        | T::RecoverySprinter
+        | T::BodyAngleManipulator
+        | T::TacticalFouler
+        | T::AerialGrappler
+        | T::SecondContactWinner
+        | T::ErrorImmunity
+        | T::RefereeManipulator
+        | T::StatusSensitive
+        | T::ContactSeller
+        | T::ShieldAddict
+        | T::LineStepTrapper
+        | T::QuickRestartOpportunist
+        | T::TimeKiller
+        | T::KeeperDisruptor
+        | T::ReboundDirector
+        | T::CrossPoker
+        | T::LineDictator
+        | T::ThrowLauncher
+        | T::PenaltyReader => TraitOrigin::Learnable,
+    }
+}
+
+pub fn trait_is_learnable(trait_kind: &PlayerTrait) -> bool {
+    trait_origin(trait_kind) == TraitOrigin::Learnable
+}
+
+/// Derive old profile badges from a player's attributes.
+pub fn compute_badges(attrs: &PlayerAttributes, position: &Position) -> Vec<PlayerBadge> {
+    let mut badges = Vec::new();
+    let grouped_position = position.to_group_position();
+    let is_midfielder = grouped_position == Position::Midfielder;
+    let is_forward = grouped_position == Position::Forward;
+
+    if attrs.pace >= 85 {
+        badges.push(PlayerBadge::Speedster);
+    }
+    if attrs.strength >= 85 && attrs.stamina >= 75 {
+        badges.push(PlayerBadge::Tank);
+    }
+    if attrs.agility >= 85 {
+        badges.push(PlayerBadge::Agile);
+    }
+    if attrs.stamina >= 90 {
+        badges.push(PlayerBadge::Tireless);
+    }
+    if attrs.passing >= 80 && attrs.vision >= 80 {
+        badges.push(PlayerBadge::Playmaker);
+    }
+    if attrs.shooting >= 85 {
+        badges.push(PlayerBadge::Sharpshooter);
+    }
+    if attrs.dribbling >= 85 {
+        badges.push(PlayerBadge::Dribbler);
+    }
+    if attrs.tackling >= 80 && attrs.aggression >= 70 {
+        badges.push(PlayerBadge::BallWinner);
+    }
+    if attrs.defending >= 85 && attrs.positioning >= 75 {
+        badges.push(PlayerBadge::Rock);
+    }
+    if attrs.leadership >= 85 && attrs.teamwork >= 75 {
+        badges.push(PlayerBadge::Leader);
+    }
+    if attrs.composure >= 85 && attrs.decisions >= 80 {
+        badges.push(PlayerBadge::CoolHead);
+    }
+    if attrs.vision >= 85 {
+        badges.push(PlayerBadge::Visionary);
+    }
+    if attrs.aggression >= 85 && attrs.composure < 50 {
+        badges.push(PlayerBadge::HotHead);
+    }
+    if attrs.teamwork >= 85 {
+        badges.push(PlayerBadge::TeamPlayer);
+    }
+    if attrs.handling >= 85 {
+        badges.push(PlayerBadge::SafeHands);
+    }
+    if attrs.reflexes >= 85 {
+        badges.push(PlayerBadge::CatReflexes);
+    }
+    if attrs.aerial >= 85 {
+        badges.push(PlayerBadge::AerialDominance);
+    }
+    if is_forward
+        && attrs.shooting >= 75
+        && attrs.dribbling >= 75
+        && attrs.pace >= 70
+        && attrs.strength >= 70
+    {
+        badges.push(PlayerBadge::CompleteForward);
+    }
+    if is_midfielder && attrs.stamina >= 85 && attrs.pace >= 70 && attrs.teamwork >= 75 {
+        badges.push(PlayerBadge::Engine);
+    }
+    if attrs.passing >= 80 && attrs.shooting >= 75 && attrs.vision >= 75 {
+        badges.push(PlayerBadge::SetPieceSpecialist);
+    }
+
+    badges
+}
+
 /// Derive engine-facing traits from a player's attributes and natural role context.
 pub fn compute_traits(attrs: &PlayerAttributes, position: &Position) -> Vec<PlayerTrait> {
     let mut traits = Vec::new();
     let grouped_position = position.to_group_position();
     let is_midfielder = grouped_position == Position::Midfielder;
     let is_forward = grouped_position == Position::Forward;
-
-    // Physical
-    if attrs.pace >= 85 {
-        traits.push(PlayerTrait::Speedster);
-    }
-    if attrs.strength >= 85 && attrs.stamina >= 75 {
-        traits.push(PlayerTrait::Tank);
-    }
-    if attrs.agility >= 85 {
-        traits.push(PlayerTrait::Agile);
-    }
-    if attrs.stamina >= 90 {
-        traits.push(PlayerTrait::Tireless);
-    }
-
-    // Technical
-    if attrs.passing >= 80 && attrs.vision >= 80 {
-        traits.push(PlayerTrait::Playmaker);
-    }
-    if attrs.shooting >= 85 {
-        traits.push(PlayerTrait::Sharpshooter);
-    }
-    if attrs.dribbling >= 85 {
-        traits.push(PlayerTrait::Dribbler);
-    }
-    if attrs.tackling >= 80 && attrs.aggression >= 70 {
-        traits.push(PlayerTrait::BallWinner);
-    }
-    if attrs.defending >= 85 && attrs.positioning >= 75 {
-        traits.push(PlayerTrait::Rock);
-    }
-
-    // Mental
-    if attrs.leadership >= 85 && attrs.teamwork >= 75 {
-        traits.push(PlayerTrait::Leader);
-    }
-    if attrs.composure >= 85 && attrs.decisions >= 80 {
-        traits.push(PlayerTrait::CoolHead);
-    }
-    if attrs.vision >= 85 {
-        traits.push(PlayerTrait::Visionary);
-    }
-    if attrs.aggression >= 85 && attrs.composure < 50 {
-        traits.push(PlayerTrait::HotHead);
-    }
-    if attrs.teamwork >= 85 {
-        traits.push(PlayerTrait::TeamPlayer);
-    }
-
-    // Goalkeeper-oriented (any player with high GK stats can earn these)
-    if attrs.handling >= 85 {
-        traits.push(PlayerTrait::SafeHands);
-    }
-    if attrs.reflexes >= 85 {
-        traits.push(PlayerTrait::CatReflexes);
-    }
-    if attrs.aerial >= 85 {
-        traits.push(PlayerTrait::AerialDominance);
-    }
-
-    // Combo / Special — purely attribute-based
-    if attrs.shooting >= 75 && attrs.dribbling >= 75 && attrs.pace >= 70 && attrs.strength >= 70 {
-        traits.push(PlayerTrait::CompleteForward);
-    }
-    if attrs.stamina >= 85 && attrs.pace >= 70 && attrs.teamwork >= 75 {
-        traits.push(PlayerTrait::Engine);
-    }
-    if attrs.passing >= 80 && attrs.shooting >= 75 && attrs.vision >= 75 {
-        traits.push(PlayerTrait::SetPieceSpecialist);
-    }
 
     // Perceptual / cognitive
     if attrs.vision >= 82 && attrs.decisions >= 80 && attrs.composure >= 75 {
@@ -772,6 +895,7 @@ impl Player {
         position: Position,
         attributes: PlayerAttributes,
     ) -> Self {
+        let badges = compute_badges(&attributes, &position);
         let traits = compute_traits(&attributes, &position);
         Self {
             id,
@@ -790,6 +914,7 @@ impl Player {
             fitness: 75,
             injury: None,
             team_id: None,
+            badges,
             traits,
             contract_end: None,
             wage: 0,
@@ -798,6 +923,7 @@ impl Player {
             match_stats: Vec::new(),
             career: Vec::new(),
             training_focus: None,
+            development_plan: PlayerDevelopmentPlan::default(),
             transfer_listed: false,
             loan_listed: false,
             transfer_offers: Vec::new(),
@@ -806,14 +932,19 @@ impl Player {
     }
 
     pub fn repair_missing_traits(&mut self) -> bool {
-        if !self.traits.is_empty() {
-            return false;
-        }
         let position = if self.natural_position.is_legacy_bucket() {
             self.position.clone()
         } else {
             self.natural_position.clone()
         };
+        let mut changed = false;
+        if self.badges.is_empty() {
+            self.badges = compute_badges(&self.attributes, &position);
+            changed = true;
+        }
+        if !self.traits.is_empty() {
+            return changed;
+        }
         self.traits = compute_traits(&self.attributes, &position);
         true
     }
@@ -841,6 +972,7 @@ mod tests {
             aggression: 54,
             teamwork: 76,
             leadership: 49,
+            professionalism: 50,
             handling: 20,
             reflexes: 24,
             aerial: 44,

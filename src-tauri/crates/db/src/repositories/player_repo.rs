@@ -1,4 +1,4 @@
-use domain::player::{Footedness, Player, PlayerAttributes, Position};
+use domain::player::{Footedness, Player, PlayerAttributes, PlayerDevelopmentPlan, Position};
 use domain::team::TrainingFocus;
 use rusqlite::{Connection, params};
 
@@ -10,6 +10,7 @@ pub fn upsert_player(conn: &Connection, p: &Player) -> Result<(), String> {
         .injury
         .as_ref()
         .map(|i| serde_json::to_string(i).unwrap_or_default());
+    let badges_json = serde_json::to_string(&p.badges).map_err(|e| format!("JSON error: {}", e))?;
     let traits_json = serde_json::to_string(&p.traits).map_err(|e| format!("JSON error: {}", e))?;
     let stats_json = serde_json::to_string(&p.stats).map_err(|e| format!("JSON error: {}", e))?;
     let match_stats_json =
@@ -19,6 +20,8 @@ pub fn upsert_player(conn: &Connection, p: &Player) -> Result<(), String> {
         serde_json::to_string(&p.transfer_offers).map_err(|e| format!("JSON error: {}", e))?;
     let morale_core_json =
         serde_json::to_string(&p.morale_core).map_err(|e| format!("JSON error: {}", e))?;
+    let development_plan_json =
+        serde_json::to_string(&p.development_plan).map_err(|e| format!("JSON error: {}", e))?;
     let position_str = format!("{:?}", p.position);
     let natural_position_str = format!("{:?}", p.natural_position);
     let alt_positions_json =
@@ -29,11 +32,11 @@ pub fn upsert_player(conn: &Connection, p: &Player) -> Result<(), String> {
     conn.execute(
         "INSERT OR REPLACE INTO players
          (id, match_name, full_name, date_of_birth, nationality, position,
-          attributes, condition, morale, injury, team_id, traits,
-          contract_end, wage, market_value, stats, career,
+          attributes, condition, morale, injury, team_id, traits, engine_traits,
+         contract_end, wage, market_value, stats, career,
           transfer_listed, loan_listed, transfer_offers, alternate_positions,
-          natural_position, training_focus, match_stats, morale_core, footedness, weak_foot, fitness)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
+          natural_position, training_focus, match_stats, morale_core, footedness, weak_foot, fitness, development_plan)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)",
         params![
             p.id,
             p.match_name,
@@ -46,6 +49,7 @@ pub fn upsert_player(conn: &Connection, p: &Player) -> Result<(), String> {
             p.morale,
             injury_json,
             p.team_id,
+            badges_json,
             traits_json,
             p.contract_end,
             p.wage,
@@ -63,6 +67,7 @@ pub fn upsert_player(conn: &Connection, p: &Player) -> Result<(), String> {
             footedness_str,
             p.weak_foot,
             p.fitness,
+            development_plan_json,
         ],
     )
     .map_err(|e| format!("Failed to upsert player: {}", e))?;
@@ -126,9 +131,10 @@ pub fn load_all_players(conn: &Connection) -> Result<Vec<Player>, String> {
         .prepare(
             "SELECT id, match_name, full_name, date_of_birth, nationality, position,
                     attributes, condition, morale, injury, team_id, traits,
+                    engine_traits,
                     contract_end, wage, market_value, stats, career,
                     transfer_listed, loan_listed, transfer_offers, alternate_positions,
-                    natural_position, training_focus, match_stats, morale_core, footedness, weak_foot, fitness
+                    natural_position, training_focus, match_stats, morale_core, footedness, weak_foot, fitness, development_plan
              FROM players",
         )
         .map_err(|e| format!("Failed to prepare players query: {}", e))?;
@@ -150,9 +156,10 @@ pub fn load_players_by_team(conn: &Connection, team_id: &str) -> Result<Vec<Play
         .prepare(
             "SELECT id, match_name, full_name, date_of_birth, nationality, position,
                     attributes, condition, morale, injury, team_id, traits,
+                    engine_traits,
                     contract_end, wage, market_value, stats, career,
                     transfer_listed, loan_listed, transfer_offers, alternate_positions,
-                    natural_position, training_focus, match_stats, morale_core, footedness, weak_foot, fitness
+                    natural_position, training_focus, match_stats, morale_core, footedness, weak_foot, fitness, development_plan
              FROM players WHERE team_id = ?1",
         )
         .map_err(|e| format!("Failed to prepare players query: {}", e))?;
@@ -172,21 +179,23 @@ fn row_to_player(row: &rusqlite::Row) -> rusqlite::Result<Player> {
     let position_str: String = row.get(5)?;
     let attrs_json: String = row.get(6)?;
     let injury_json: Option<String> = row.get(9)?;
-    let traits_json: String = row.get(11)?;
-    let stats_json: String = row.get(15)?;
-    let career_json: String = row.get(16)?;
-    let offers_json: String = row.get(19)?;
-    let alt_positions_json: String = row.get(20)?;
-    let natural_position_str: String = row.get(21)?;
-    let training_focus_str: Option<String> = row.get(22)?;
-    let match_stats_json: String = row.get(23)?;
-    let morale_core_json: String = row.get(24)?;
-    let footedness_str: String = row.get(25)?;
-    let weak_foot: u8 = row.get(26)?;
-    let fitness: u8 = row.get(27).unwrap_or(75); // default 75 for saves before V14
-    let transfer_listed_int: i32 = row.get(17)?;
-    let loan_listed_int: i32 = row.get(18)?;
-    let market_value_i64: i64 = row.get(14)?;
+    let badges_json: String = row.get(11)?;
+    let traits_json: String = row.get(12)?;
+    let stats_json: String = row.get(16)?;
+    let career_json: String = row.get(17)?;
+    let offers_json: String = row.get(20)?;
+    let alt_positions_json: String = row.get(21)?;
+    let natural_position_str: String = row.get(22)?;
+    let training_focus_str: Option<String> = row.get(23)?;
+    let match_stats_json: String = row.get(24)?;
+    let morale_core_json: String = row.get(25)?;
+    let footedness_str: String = row.get(26)?;
+    let weak_foot: u8 = row.get(27)?;
+    let fitness: u8 = row.get(28).unwrap_or(75); // default 75 for saves before V14
+    let development_plan_json: String = row.get(29).unwrap_or_else(|_| "{}".to_string());
+    let transfer_listed_int: i32 = row.get(18)?;
+    let loan_listed_int: i32 = row.get(19)?;
+    let market_value_i64: i64 = row.get(15)?;
 
     let position = parse_position(&position_str);
     let natural_position = if natural_position_str.is_empty() {
@@ -211,6 +220,7 @@ fn row_to_player(row: &rusqlite::Row) -> rusqlite::Result<Player> {
         aggression: 50,
         teamwork: 50,
         leadership: 50,
+        professionalism: 50,
         handling: 50,
         reflexes: 50,
         aerial: 50,
@@ -232,9 +242,10 @@ fn row_to_player(row: &rusqlite::Row) -> rusqlite::Result<Player> {
         fitness,
         injury: injury_json.and_then(|j| serde_json::from_str(&j).ok()),
         team_id: row.get(10)?,
+        badges: serde_json::from_str(&badges_json).unwrap_or_default(),
         traits: serde_json::from_str(&traits_json).unwrap_or_default(),
-        contract_end: row.get(12)?,
-        wage: row.get(13)?,
+        contract_end: row.get(13)?,
+        wage: row.get(14)?,
         market_value: market_value_i64 as u64,
         stats: serde_json::from_str(&stats_json).unwrap_or_default(),
         match_stats: serde_json::from_str(&match_stats_json).unwrap_or_default(),
@@ -244,6 +255,8 @@ fn row_to_player(row: &rusqlite::Row) -> rusqlite::Result<Player> {
         loan_listed: loan_listed_int != 0,
         transfer_offers: serde_json::from_str(&offers_json).unwrap_or_default(),
         morale_core: serde_json::from_str(&morale_core_json).unwrap_or_default(),
+        development_plan: serde_json::from_str(&development_plan_json)
+            .unwrap_or_else(|_| PlayerDevelopmentPlan::default()),
     })
 }
 
@@ -253,6 +266,7 @@ mod tests {
     use crate::game_database::GameDatabase;
     use domain::player::{
         Injury, PlayerIssue, PlayerIssueCategory, PlayerMatchStatsEntry, PlayerMoraleCore,
+        PlayerPositionTrainingGoal, PlayerTrait, PlayerTraitTrainingGoal, TraitTrainingMode,
     };
 
     fn test_db() -> GameDatabase {
@@ -284,6 +298,7 @@ mod tests {
                 aggression: 55,
                 teamwork: 80,
                 leadership: 45,
+                professionalism: 50,
                 handling: 20,
                 reflexes: 25,
                 aerial: 40,
@@ -545,5 +560,34 @@ mod tests {
         upsert_player(db.conn(), &player).unwrap();
         let loaded = load_all_players(db.conn()).unwrap();
         assert_eq!(loaded[0].fitness, 75);
+    }
+
+    #[test]
+    fn test_player_development_plan_roundtrip() {
+        let db = test_db();
+        let mut player = sample_player("p-001", Some("team-001"));
+        player.development_plan.trait_goal = Some(PlayerTraitTrainingGoal {
+            target_trait: PlayerTrait::DelayedPasser,
+            mode: TraitTrainingMode::Learn,
+            progress: 37.5,
+            completed_sessions: 22,
+        });
+        player.development_plan.position_goal = Some(PlayerPositionTrainingGoal {
+            target_position: Position::DefensiveMidfielder,
+            progress: 61.0,
+            completed_sessions: 30,
+        });
+
+        upsert_player(db.conn(), &player).unwrap();
+        let loaded = load_all_players(db.conn()).unwrap();
+
+        let trait_goal = loaded[0].development_plan.trait_goal.as_ref().unwrap();
+        assert_eq!(trait_goal.target_trait, PlayerTrait::DelayedPasser);
+        assert_eq!(trait_goal.mode, TraitTrainingMode::Learn);
+        assert_eq!(trait_goal.completed_sessions, 22);
+
+        let position_goal = loaded[0].development_plan.position_goal.as_ref().unwrap();
+        assert_eq!(position_goal.target_position, Position::DefensiveMidfielder);
+        assert_eq!(position_goal.completed_sessions, 30);
     }
 }

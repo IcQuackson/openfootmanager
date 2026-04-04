@@ -43,6 +43,7 @@ fn make_player(id: &str, name: &str, team_id: &str, pos: Position) -> Player {
         aggression: 50,
         teamwork: 65,
         leadership: 50,
+        professionalism: 50,
         handling: 20,
         reflexes: 30,
         aerial: 60,

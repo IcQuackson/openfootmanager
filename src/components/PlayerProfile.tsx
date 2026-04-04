@@ -19,6 +19,7 @@ import {
   CardHeader,
   CardBody,
   Badge,
+  Select,
   ProgressBar,
   CountryFlag,
 } from "./ui";
@@ -34,7 +35,7 @@ import {
   AlertTriangle,
   ScanSearch,
 } from "lucide-react";
-import { TraitList } from "./TraitBadge";
+import { ENGINE_TRAIT_NAMES, TraitList } from "./TraitBadge";
 import { useTranslation } from "react-i18next";
 import { countryName } from "../lib/countries";
 import { resolveBackendText } from "../utils/backendI18n";
@@ -43,6 +44,12 @@ import NegotiationFeedbackPanel, {
   type NegotiationFeedbackPanelData,
 } from "./NegotiationFeedbackPanel";
 import { translatePositionLabel } from "./SquadTab.helpers";
+import {
+  tacticalRoleFitClassName,
+  tacticalRoleFitScore,
+  translateTacticalRoleDescription,
+  translateTacticalRoleLabel,
+} from "./tacticalRoles";
 
 interface PlayerProfileProps {
   player: PlayerData;
@@ -150,6 +157,21 @@ function attrColor(val: number): string {
 }
 
 const LEAGUE_PERCENTILE_MINUTES = 90;
+const POSITION_TRAINING_OPTIONS = [
+  "RightBack",
+  "CenterBack",
+  "LeftBack",
+  "RightWingBack",
+  "LeftWingBack",
+  "DefensiveMidfielder",
+  "CentralMidfielder",
+  "AttackingMidfielder",
+  "RightMidfielder",
+  "LeftMidfielder",
+  "RightWinger",
+  "LeftWinger",
+  "Striker",
+] as const;
 
 function per90(total: number, minutesPlayed: number): number {
   if (minutesPlayed <= 0) return 0;
@@ -245,14 +267,78 @@ export default function PlayerProfile({
     useState<RenewalProjectionData["projection"] | null>(null);
   const [hasConsumedInitialRenewalIntent, setHasConsumedInitialRenewalIntent] =
     useState(false);
+  const [traitTrainingMode, setTraitTrainingMode] = useState<"Learn" | "Unlearn">("Learn");
+  const [selectedTraitGoal, setSelectedTraitGoal] = useState("");
+  const [selectedPositionGoal, setSelectedPositionGoal] = useState("");
+  const [developmentSaving, setDevelopmentSaving] = useState(false);
+  const [developmentError, setDevelopmentError] = useState<string | null>(null);
+
   const ovr = calcOvr(player, primaryPosition);
   const age = calcAge(player.date_of_birth);
+  const isManagerTeamPlayer = player.team_id === gameState.manager.team_id;
+  const canEditDevelopment = isOwnClub && isManagerTeamPlayer && !!onGameUpdate;
+  const developmentPlan = player.development_plan ?? {
+    trait_goal: null,
+    position_goal: null,
+  };
+
+  const traitGoalOptions = useMemo(() => {
+    const playerTraits = new Set(player.traits ?? []);
+    return ENGINE_TRAIT_NAMES.filter((traitName) =>
+      traitTrainingMode === "Learn"
+        ? !playerTraits.has(traitName)
+        : playerTraits.has(traitName),
+    );
+  }, [player.traits, traitTrainingMode]);
+
+  const knownPositions = useMemo(
+    () => new Set([primaryPosition, ...(player.alternate_positions ?? [])]),
+    [primaryPosition, player.alternate_positions],
+  );
+  const positionGoalOptions = useMemo(
+    () => POSITION_TRAINING_OPTIONS.filter((pos) => !knownPositions.has(pos)),
+    [knownPositions],
+  );
+
+  useEffect(() => {
+    if (traitGoalOptions.length === 0) {
+      setSelectedTraitGoal("");
+      return;
+    }
+    if (!traitGoalOptions.includes(selectedTraitGoal)) {
+      setSelectedTraitGoal(traitGoalOptions[0]);
+    }
+  }, [traitGoalOptions, selectedTraitGoal]);
+
+  useEffect(() => {
+    if (positionGoalOptions.length === 0) {
+      setSelectedPositionGoal("");
+      return;
+    }
+    if (!positionGoalOptions.some((position) => position === selectedPositionGoal)) {
+      setSelectedPositionGoal(positionGoalOptions[0]);
+    }
+  }, [positionGoalOptions, selectedPositionGoal]);
+
   const teamName = getTeamNameLocal(
     gameState.teams,
     player.team_id,
     t("common.freeAgent"),
     t("common.unknown"),
   );
+  const managerTeam = gameState.teams.find(
+    (team) => team.id === gameState.manager.team_id,
+  );
+  const startingXiIndex =
+    managerTeam?.starting_xi_ids?.findIndex((id) => id === player.id) ?? -1;
+  const currentTacticalRole =
+    startingXiIndex >= 0 && managerTeam?.tactical_roles?.[startingXiIndex]
+      ? managerTeam.tactical_roles[startingXiIndex]
+      : null;
+  const currentRoleFit =
+    currentTacticalRole != null
+      ? tacticalRoleFitScore(player, currentTacticalRole)
+      : null;
   const contractRiskLevel = getContractRiskLevel(
     player.contract_end,
     gameState.clock.current_date,
@@ -279,6 +365,82 @@ export default function PlayerProfile({
     !isRenewalWageValid ||
     !isRenewalLengthValid ||
     renewalViolatesSoftCap;
+
+  async function applyTraitDevelopmentGoal() {
+    if (!canEditDevelopment || !onGameUpdate || !selectedTraitGoal) return;
+    setDevelopmentSaving(true);
+    setDevelopmentError(null);
+    try {
+      const updated = await invoke<GameStateData>("set_player_trait_training_goal", {
+        playerId: player.id,
+        mode: traitTrainingMode,
+        traitName: selectedTraitGoal,
+      });
+      onGameUpdate(updated);
+    } catch (error) {
+      setDevelopmentError(String(error));
+    } finally {
+      setDevelopmentSaving(false);
+    }
+  }
+
+  async function clearTraitDevelopmentGoal() {
+    if (!canEditDevelopment || !onGameUpdate) return;
+    setDevelopmentSaving(true);
+    setDevelopmentError(null);
+    try {
+      const updated = await invoke<GameStateData>("set_player_trait_training_goal", {
+        playerId: player.id,
+        mode: null,
+        traitName: null,
+      });
+      onGameUpdate(updated);
+    } catch (error) {
+      setDevelopmentError(String(error));
+    } finally {
+      setDevelopmentSaving(false);
+    }
+  }
+
+  async function applyPositionDevelopmentGoal() {
+    if (!canEditDevelopment || !onGameUpdate || !selectedPositionGoal) return;
+    setDevelopmentSaving(true);
+    setDevelopmentError(null);
+    try {
+      const updated = await invoke<GameStateData>(
+        "set_player_position_training_goal",
+        {
+          playerId: player.id,
+          position: selectedPositionGoal,
+        },
+      );
+      onGameUpdate(updated);
+    } catch (error) {
+      setDevelopmentError(String(error));
+    } finally {
+      setDevelopmentSaving(false);
+    }
+  }
+
+  async function clearPositionDevelopmentGoal() {
+    if (!canEditDevelopment || !onGameUpdate) return;
+    setDevelopmentSaving(true);
+    setDevelopmentError(null);
+    try {
+      const updated = await invoke<GameStateData>(
+        "set_player_position_training_goal",
+        {
+          playerId: player.id,
+          position: null,
+        },
+      );
+      onGameUpdate(updated);
+    } catch (error) {
+      setDevelopmentError(String(error));
+    } finally {
+      setDevelopmentSaving(false);
+    }
+  }
 
   const isGK = player.position === "Goalkeeper";
   const currentSeason = gameState.league?.season ?? null;
@@ -799,6 +961,12 @@ export default function PlayerProfile({
           name: t("common.attributes.leadership"),
           value: player.attributes.leadership,
         },
+        {
+          name: t("common.attributes.professionalism", {
+            defaultValue: "Professionalism",
+          }),
+          value: player.attributes.professionalism ?? 50,
+        },
       ],
     },
     ...(isGK
@@ -900,11 +1068,241 @@ export default function PlayerProfile({
                   <span>{teamName}</span>
                 )}
               </p>
-              {player.traits && player.traits.length > 0 && (
+              {(player.badges || []).length > 0 && (
                 <div className="mt-3">
-                  <TraitList traits={player.traits} size="sm" />
+                  <TraitList traits={player.badges || []} size="sm" />
                 </div>
               )}
+              {currentTacticalRole ? (
+                <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 dark:border-navy-600 dark:bg-navy-800/70">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-[10px] font-heading font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">
+                        {t("playerProfile.currentRole", "Current role")}
+                      </div>
+                      <div className="mt-1 text-sm font-heading font-bold text-gray-900 dark:text-gray-100">
+                        {translateTacticalRoleLabel(t, currentTacticalRole)}
+                      </div>
+                    </div>
+                    {currentRoleFit !== null ? (
+                      <div
+                        className={`text-sm font-heading font-bold uppercase tracking-wider ${tacticalRoleFitClassName(
+                          currentRoleFit,
+                        )}`}
+                      >
+                        {t("tactics.roleFit", "Role fit")} {currentRoleFit}
+                      </div>
+                    ) : null}
+                  </div>
+                  <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
+                    {translateTacticalRoleDescription(t, currentTacticalRole)}
+                  </p>
+                </div>
+              ) : null}
+              {player.traits && player.traits.length > 0 ? (
+                <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 dark:border-navy-600 dark:bg-navy-800/70">
+                  <div className="text-[10px] font-heading font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">
+                    {t("playerProfile.traitsSection", { defaultValue: "Traits" })}
+                  </div>
+                  <div className="mt-2">
+                    <TraitList traits={player.traits} size="sm" />
+                  </div>
+                </div>
+              ) : null}
+              {canEditDevelopment ? (
+                <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 dark:border-navy-600 dark:bg-navy-800/70">
+                  <div className="text-[10px] font-heading font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">
+                    {t("playerProfile.developmentSection", {
+                      defaultValue: "Development",
+                    })}
+                  </div>
+                  <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <Select
+                      value={traitTrainingMode}
+                      onChange={(event) =>
+                        setTraitTrainingMode(
+                          event.target.value as "Learn" | "Unlearn",
+                        )
+                      }
+                      selectSize="sm"
+                      variant="muted"
+                      aria-label={t("playerProfile.traitTrainingMode", {
+                        defaultValue: "Trait training mode",
+                      })}
+                    >
+                      <option value="Learn">
+                        {t("playerProfile.learnTrait", {
+                          defaultValue: "Learn trait",
+                        })}
+                      </option>
+                      <option value="Unlearn">
+                        {t("playerProfile.unlearnTrait", {
+                          defaultValue: "Unlearn trait",
+                        })}
+                      </option>
+                    </Select>
+                    <Select
+                      value={selectedTraitGoal}
+                      onChange={(event) => setSelectedTraitGoal(event.target.value)}
+                      selectSize="sm"
+                      variant="muted"
+                      disabled={traitGoalOptions.length === 0}
+                      aria-label={t("playerProfile.traitTarget", {
+                        defaultValue: "Trait target",
+                      })}
+                    >
+                      {traitGoalOptions.length === 0 ? (
+                        <option value="">
+                          {t("playerProfile.noTraitOptions", {
+                            defaultValue: "No valid traits",
+                          })}
+                        </option>
+                      ) : (
+                        traitGoalOptions.map((traitName) => (
+                          <option key={traitName} value={traitName}>
+                            {traitName.replace(/([a-z])([A-Z])/g, "$1 $2")}
+                          </option>
+                        ))
+                      )}
+                    </Select>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={
+                        developmentSaving ||
+                        traitGoalOptions.length === 0 ||
+                        selectedTraitGoal.length === 0
+                      }
+                      onClick={applyTraitDevelopmentGoal}
+                    >
+                      {t("playerProfile.setTraitGoal", {
+                        defaultValue: "Set trait goal",
+                      })}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={developmentSaving || !developmentPlan.trait_goal}
+                      onClick={clearTraitDevelopmentGoal}
+                    >
+                      {t("playerProfile.clearTraitGoal", {
+                        defaultValue: "Clear trait goal",
+                      })}
+                    </Button>
+                  </div>
+                  <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                    {developmentPlan.trait_goal ? (
+                      <span>
+                        {t("playerProfile.currentTraitGoal", {
+                          defaultValue:
+                            "Current trait goal: {{mode}} {{trait}} ({{progress}}%)",
+                          mode:
+                            developmentPlan.trait_goal.mode === "Learn"
+                              ? t("playerProfile.learnTraitShort", {
+                                defaultValue: "Learn",
+                              })
+                              : t("playerProfile.unlearnTraitShort", {
+                                defaultValue: "Unlearn",
+                              }),
+                          trait: developmentPlan.trait_goal.target_trait.replace(
+                            /([a-z])([A-Z])/g,
+                            "$1 $2",
+                          ),
+                          progress: Math.round(
+                            developmentPlan.trait_goal.progress ?? 0,
+                          ),
+                        })}
+                      </span>
+                    ) : (
+                      <span>
+                        {t("playerProfile.noTraitGoalSet", {
+                          defaultValue: "No trait goal set.",
+                        })}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <Select
+                      value={selectedPositionGoal}
+                      onChange={(event) => setSelectedPositionGoal(event.target.value)}
+                      selectSize="sm"
+                      variant="muted"
+                      disabled={positionGoalOptions.length === 0}
+                      aria-label={t("playerProfile.positionTarget", {
+                        defaultValue: "Position target",
+                      })}
+                    >
+                      {positionGoalOptions.length === 0 ? (
+                        <option value="">
+                          {t("playerProfile.noPositionOptions", {
+                            defaultValue: "No position targets",
+                          })}
+                        </option>
+                      ) : (
+                        positionGoalOptions.map((positionName) => (
+                          <option key={positionName} value={positionName}>
+                            {translatePositionLabel(t, positionName)}
+                          </option>
+                        ))
+                      )}
+                    </Select>
+                    <div className="hidden md:block" />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={
+                        developmentSaving ||
+                        positionGoalOptions.length === 0 ||
+                        selectedPositionGoal.length === 0
+                      }
+                      onClick={applyPositionDevelopmentGoal}
+                    >
+                      {t("playerProfile.setPositionGoal", {
+                        defaultValue: "Set position goal",
+                      })}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={developmentSaving || !developmentPlan.position_goal}
+                      onClick={clearPositionDevelopmentGoal}
+                    >
+                      {t("playerProfile.clearPositionGoal", {
+                        defaultValue: "Clear position goal",
+                      })}
+                    </Button>
+                  </div>
+                  <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                    {developmentPlan.position_goal ? (
+                      <span>
+                        {t("playerProfile.currentPositionGoal", {
+                          defaultValue:
+                            "Current position goal: {{position}} ({{progress}}%)",
+                          position: translatePositionLabel(
+                            t,
+                            developmentPlan.position_goal.target_position,
+                          ),
+                          progress: Math.round(
+                            developmentPlan.position_goal.progress ?? 0,
+                          ),
+                        })}
+                      </span>
+                    ) : (
+                      <span>
+                        {t("playerProfile.noPositionGoalSet", {
+                          defaultValue: "No position goal set.",
+                        })}
+                      </span>
+                    )}
+                  </div>
+                  {developmentError ? (
+                    <p className="mt-2 text-xs text-red-500 dark:text-red-400">
+                      {developmentError}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
 
             {/* Scout button for non-own players */}

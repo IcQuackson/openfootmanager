@@ -2,6 +2,9 @@ mod fitness_warnings;
 pub use fitness_warnings::check_squad_fitness_warnings;
 
 use crate::game::Game;
+use domain::player::{
+    Player, PlayerAttributes, PlayerTrait, Position, TraitTrainingMode, trait_is_learnable,
+};
 use domain::staff::{CoachingSpecialization, StaffRole};
 use domain::team::{TrainingFocus, TrainingIntensity, TrainingSchedule};
 
@@ -220,11 +223,14 @@ pub fn process_training(game: &mut Game, weekday_num: u32) {
             };
 
             // Base gain per attribute per session, boosted by coaching staff
+            let professionalism_training_mult =
+                training_effectiveness_from_professionalism(player.attributes.professionalism);
             let gain = 0.15
                 * intensity_mult
                 * age_factor
                 * plan.bonus.coaching_mult
-                * plan.bonus.specialization_mult;
+                * plan.bonus.specialization_mult
+                * professionalism_training_mult;
 
             // Apply attribute gains based on player's effective focus
             apply_focus_gains(&mut player.attributes, &player_focus, gain);
@@ -232,7 +238,12 @@ pub fn process_training(game: &mut Game, weekday_num: u32) {
             // Apply fitness changes based on training focus.
             // Physical training builds fitness; non-physical days slowly decay it if peak.
             // Recovery focus gives a tiny fitness boost.
-            apply_fitness_change(&mut player.fitness, &player_focus, intensity_mult);
+            apply_fitness_change(
+                &mut player.fitness,
+                &player_focus,
+                intensity_mult,
+                player.attributes.professionalism,
+            );
 
             // Apply condition: deplete from training, then recover
             player.condition = player.condition.saturating_sub(condition_cost);
@@ -244,6 +255,8 @@ pub fn process_training(game: &mut Game, weekday_num: u32) {
                 * condition_rec
                 * fitness_rec) as u8;
             player.condition = (player.condition + recovery).min(100);
+
+            process_development_progress(player, &player_focus, intensity_mult);
         }
     }
 }
@@ -251,14 +264,20 @@ pub fn process_training(game: &mut Game, weekday_num: u32) {
 /// Apply fitness changes based on training focus.
 /// Physical training builds fitness (probabilistic small gains).
 /// Recovery focus gives a tiny boost. Non-physical training slowly decays high fitness.
-fn apply_fitness_change(fitness: &mut u8, focus: &TrainingFocus, intensity_mult: f64) {
+fn apply_fitness_change(
+    fitness: &mut u8,
+    focus: &TrainingFocus,
+    intensity_mult: f64,
+    professionalism: u8,
+) {
     use rand::Rng;
     let mut rng = rand::thread_rng();
+    let professionalism_mult = 0.75 + (professionalism as f64 / 100.0) * 0.5;
     match focus {
         TrainingFocus::Physical => {
             // Physical training is the primary way to build fitness.
             // Higher intensity → higher gain probability.
-            let gain_prob = 0.015 * intensity_mult; // 0.0075–0.0225 per session
+            let gain_prob = 0.015 * intensity_mult * professionalism_mult; // 0.0075–0.0281 per session
             let roll: f64 = rng.gen_range(0.0..1.0);
             if roll < gain_prob && *fitness < 100 {
                 *fitness = fitness.saturating_add(1);
@@ -267,7 +286,7 @@ fn apply_fitness_change(fitness: &mut u8, focus: &TrainingFocus, intensity_mult:
         TrainingFocus::Recovery => {
             // Recovery days give a tiny fitness nudge.
             let roll: f64 = rng.gen_range(0.0..1.0);
-            if roll < 0.05 && *fitness < 100 {
+            if roll < 0.05 * professionalism_mult && *fitness < 100 {
                 *fitness = fitness.saturating_add(1);
             }
         }
@@ -280,6 +299,330 @@ fn apply_fitness_change(fitness: &mut u8, focus: &TrainingFocus, intensity_mult:
                     *fitness = fitness.saturating_sub(1);
                 }
             }
+        }
+    }
+}
+
+fn training_effectiveness_from_professionalism(professionalism: u8) -> f64 {
+    let normalized = (professionalism as f64 / 100.0).clamp(0.0, 1.0);
+    0.8 + normalized * 0.5
+}
+
+fn learning_speed_from_professionalism(professionalism: u8) -> f64 {
+    let normalized = (professionalism as f64 / 100.0).clamp(0.0, 1.0);
+    0.65 + normalized * 0.9
+}
+
+fn learning_success_from_professionalism(professionalism: u8) -> f64 {
+    let normalized = (professionalism as f64 / 100.0).clamp(0.0, 1.0);
+    0.35 + normalized * 0.55
+}
+
+fn avg_attr(values: &[u8]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.iter().map(|v| *v as f64).sum::<f64>() / (values.len() as f64 * 100.0)
+}
+
+fn trait_learning_affinity(attrs: &PlayerAttributes, trait_kind: &PlayerTrait) -> f64 {
+    use PlayerTrait as T;
+    match trait_kind {
+        T::EarlyScanner
+        | T::BlindSideAwareness
+        | T::TempoManipulator
+        | T::DelayedPasser
+        | T::RiskCalibrator
+        | T::SpaceMagnet
+        | T::PressBaiter
+        | T::TransitionAnticipator
+        | T::OneTouchSpecialist
+        | T::OutsideFootPasser => avg_attr(&[
+            attrs.passing,
+            attrs.vision,
+            attrs.decisions,
+            attrs.composure,
+        ]),
+        T::ToePokeFinisher
+        | T::AerialRedirection
+        | T::HalfVolleyComfort
+        | T::NearPostHunter
+        | T::BlindSideRunner
+        | T::FarPostGhost
+        | T::ReboundInstinct
+        | T::KeeperDisruptor => avg_attr(&[
+            attrs.shooting,
+            attrs.positioning,
+            attrs.composure,
+            attrs.pace,
+        ]),
+        T::ContainmentSpecialist
+        | T::RecoverySprinter
+        | T::PassingLaneThief
+        | T::BodyAngleManipulator
+        | T::TacticalFouler
+        | T::AerialGrappler
+        | T::SecondContactWinner
+        | T::LineStepTrapper => avg_attr(&[
+            attrs.defending,
+            attrs.tackling,
+            attrs.positioning,
+            attrs.decisions,
+        ]),
+        T::DisguisedFirstTouch
+        | T::BounceTechnician
+        | T::RecoveryTouch
+        | T::ChannelDrifter
+        | T::ContactSeller
+        | T::NutmegOpportunist
+        | T::BounceRoomDribbler
+        | T::ChaosCreator => avg_attr(&[
+            attrs.dribbling,
+            attrs.agility,
+            attrs.composure,
+            attrs.decisions,
+        ]),
+        T::ReboundDirector
+        | T::CrossPoker
+        | T::BreakawayHypnotist
+        | T::LineDictator
+        | T::ThrowLauncher
+        | T::PenaltyReader
+        | T::TrafficCommander => avg_attr(&[
+            attrs.handling,
+            attrs.reflexes,
+            attrs.aerial,
+            attrs.decisions,
+        ]),
+        _ => avg_attr(&[
+            attrs.decisions,
+            attrs.teamwork,
+            attrs.composure,
+            attrs.professionalism,
+        ]),
+    }
+}
+
+fn trait_focus_multiplier(trait_kind: &PlayerTrait, focus: &TrainingFocus) -> f64 {
+    use PlayerTrait as T;
+    let is_goalkeeper_trait = matches!(
+        trait_kind,
+        T::ReboundDirector
+            | T::CrossPoker
+            | T::BreakawayHypnotist
+            | T::LineDictator
+            | T::ThrowLauncher
+            | T::PenaltyReader
+            | T::TrafficCommander
+    );
+    if is_goalkeeper_trait {
+        return match focus {
+            TrainingFocus::Defending => 1.2,
+            TrainingFocus::Tactical => 1.15,
+            TrainingFocus::Recovery => 0.8,
+            _ => 1.0,
+        };
+    }
+
+    match focus {
+        TrainingFocus::Technical => 1.2,
+        TrainingFocus::Tactical => 1.15,
+        TrainingFocus::Attacking => 1.1,
+        TrainingFocus::Defending => 1.1,
+        TrainingFocus::Physical => 0.95,
+        TrainingFocus::Recovery => 0.75,
+    }
+}
+
+fn position_learning_affinity(attrs: &PlayerAttributes, target_position: &Position) -> f64 {
+    use Position as P;
+    match target_position {
+        P::Goalkeeper => avg_attr(&[
+            attrs.handling,
+            attrs.reflexes,
+            attrs.aerial,
+            attrs.positioning,
+            attrs.decisions,
+        ]),
+        P::CenterBack => avg_attr(&[
+            attrs.defending,
+            attrs.tackling,
+            attrs.positioning,
+            attrs.strength,
+            attrs.aerial,
+        ]),
+        P::RightBack | P::LeftBack | P::RightWingBack | P::LeftWingBack => avg_attr(&[
+            attrs.pace,
+            attrs.stamina,
+            attrs.defending,
+            attrs.tackling,
+            attrs.passing,
+        ]),
+        P::DefensiveMidfielder => avg_attr(&[
+            attrs.passing,
+            attrs.defending,
+            attrs.tackling,
+            attrs.positioning,
+            attrs.decisions,
+        ]),
+        P::CentralMidfielder => avg_attr(&[
+            attrs.passing,
+            attrs.vision,
+            attrs.decisions,
+            attrs.stamina,
+            attrs.teamwork,
+        ]),
+        P::AttackingMidfielder => avg_attr(&[
+            attrs.passing,
+            attrs.vision,
+            attrs.dribbling,
+            attrs.decisions,
+            attrs.composure,
+        ]),
+        P::RightMidfielder | P::LeftMidfielder | P::RightWinger | P::LeftWinger => avg_attr(&[
+            attrs.pace,
+            attrs.dribbling,
+            attrs.passing,
+            attrs.agility,
+            attrs.positioning,
+        ]),
+        P::Striker | P::Forward => avg_attr(&[
+            attrs.shooting,
+            attrs.positioning,
+            attrs.pace,
+            attrs.dribbling,
+            attrs.composure,
+        ]),
+        P::Defender => avg_attr(&[
+            attrs.defending,
+            attrs.tackling,
+            attrs.positioning,
+            attrs.strength,
+            attrs.aerial,
+        ]),
+        P::Midfielder => avg_attr(&[
+            attrs.passing,
+            attrs.vision,
+            attrs.decisions,
+            attrs.stamina,
+            attrs.teamwork,
+        ]),
+    }
+}
+
+fn position_focus_multiplier(target_position: &Position, focus: &TrainingFocus) -> f64 {
+    let grouped = target_position.to_group_position();
+    match grouped {
+        Position::Goalkeeper => match focus {
+            TrainingFocus::Defending | TrainingFocus::Tactical => 1.2,
+            TrainingFocus::Recovery => 0.85,
+            _ => 1.0,
+        },
+        Position::Defender => match focus {
+            TrainingFocus::Defending => 1.2,
+            TrainingFocus::Tactical => 1.1,
+            TrainingFocus::Recovery => 0.85,
+            _ => 1.0,
+        },
+        Position::Midfielder => match focus {
+            TrainingFocus::Tactical => 1.2,
+            TrainingFocus::Technical => 1.15,
+            TrainingFocus::Recovery => 0.85,
+            _ => 1.0,
+        },
+        Position::Forward => match focus {
+            TrainingFocus::Attacking => 1.2,
+            TrainingFocus::Technical => 1.1,
+            TrainingFocus::Recovery => 0.85,
+            _ => 1.0,
+        },
+        _ => 1.0,
+    }
+}
+
+fn process_development_progress(player: &mut Player, focus: &TrainingFocus, intensity_mult: f64) {
+    use rand::Rng;
+
+    let professionalism_speed =
+        learning_speed_from_professionalism(player.attributes.professionalism);
+    let professionalism_success =
+        learning_success_from_professionalism(player.attributes.professionalism);
+    let mut rng = rand::thread_rng();
+
+    if let Some(mut goal) = player.development_plan.trait_goal.clone() {
+        if !trait_is_learnable(&goal.target_trait) {
+            player.development_plan.trait_goal = None;
+        } else {
+            let focus_mult = trait_focus_multiplier(&goal.target_trait, focus);
+            let affinity = trait_learning_affinity(&player.attributes, &goal.target_trait);
+            let increment =
+                0.45 * professionalism_speed * focus_mult * (0.55 + affinity) * intensity_mult;
+            goal.progress = (goal.progress + increment as f32).min(200.0);
+            goal.completed_sessions = goal.completed_sessions.saturating_add(1);
+
+            if goal.progress >= 100.0 {
+                let mut success_chance =
+                    (0.2 + professionalism_success * 0.55 + affinity * 0.25).clamp(0.1, 0.97);
+                if matches!(goal.mode, TraitTrainingMode::Unlearn) {
+                    success_chance = (success_chance + 0.05).clamp(0.1, 0.98);
+                }
+                if rng.gen_range(0.0..1.0) < success_chance {
+                    match goal.mode {
+                        TraitTrainingMode::Learn => {
+                            if !player.traits.contains(&goal.target_trait) {
+                                player.traits.push(goal.target_trait.clone());
+                            }
+                        }
+                        TraitTrainingMode::Unlearn => {
+                            player
+                                .traits
+                                .retain(|trait_kind| trait_kind != &goal.target_trait);
+                        }
+                    }
+                    player.development_plan.trait_goal = None;
+                } else {
+                    goal.progress = 70.0;
+                    player.development_plan.trait_goal = Some(goal);
+                }
+            } else {
+                player.development_plan.trait_goal = Some(goal);
+            }
+        }
+    }
+
+    if let Some(mut goal) = player.development_plan.position_goal.clone() {
+        let already_known = player.natural_position == goal.target_position
+            || player
+                .alternate_positions
+                .iter()
+                .any(|position| position == &goal.target_position);
+
+        if already_known {
+            player.development_plan.position_goal = None;
+            return;
+        }
+
+        let focus_mult = position_focus_multiplier(&goal.target_position, focus);
+        let affinity = position_learning_affinity(&player.attributes, &goal.target_position);
+        let increment =
+            0.35 * professionalism_speed * focus_mult * (0.5 + affinity) * intensity_mult;
+        goal.progress = (goal.progress + increment as f32).min(200.0);
+        goal.completed_sessions = goal.completed_sessions.saturating_add(1);
+
+        if goal.progress >= 100.0 {
+            let success_chance =
+                (0.18 + professionalism_success * 0.6 + affinity * 0.22).clamp(0.08, 0.95);
+            if rng.gen_range(0.0..1.0) < success_chance {
+                player
+                    .alternate_positions
+                    .push(goal.target_position.clone());
+                player.development_plan.position_goal = None;
+            } else {
+                goal.progress = 72.0;
+                player.development_plan.position_goal = Some(goal);
+            }
+        } else {
+            player.development_plan.position_goal = Some(goal);
         }
     }
 }
