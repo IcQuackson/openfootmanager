@@ -415,3 +415,78 @@ The balancing pass is considered successful when:
 - `Defensive` visibly lowers shot concession
 - formation changes matter more than they do now
 - player role stat distributions look believable in aggregate
+
+## Spatial 2D Simulation Roadmap
+
+The next major engine track is a spatial simulation layer to support accurate 2D visualization and richer football logic.
+
+Target outcomes:
+
+- per-tick (sub-second) simulation inside each match minute
+- persistent player `x/y` and ball `x/y/z` state over time
+- movement, duels, and ball-flight resolution at tick level
+- action selection driven by spatial context (distance, lanes, pressure, shape)
+
+### Spatial Phase 1: Tick loop and state model
+
+Scope:
+
+- add internal tick timeline (default `6` ticks per minute)
+- add persistent spatial state for all on-pitch players (`x/y`) and ball (`x/y/z`, velocity, holder)
+- expose spatial state in `MatchSnapshot` for UI consumers
+
+Validation:
+
+- `cargo test -p engine`
+- `npm run build`
+- smoke check: stepping live match updates spatial snapshot every minute
+
+### Spatial Phase 2: Movement and ball physics
+
+Scope:
+
+- anchor players to role/line baselines with dynamic team-shape offsets
+- update player movement each tick using pace/agility and tactical context
+- update ball each tick using velocity, drag, gravity, and control radius
+- support free-ball recovery and possession changes through proximity duels
+
+Validation:
+
+- no panics in long seeded runs
+- realistic continuity in ball and player movement in successive snapshots
+
+### Spatial Phase 3: Spatial actions and duels
+
+Scope:
+
+- replace minute-level random action picks with holder-driven tick decisions
+- evaluate pass targets by progression + lane openness + pressure
+- resolve dribble duels from local pressure and defender proximity
+- resolve shots from spatial context (distance/angle/pressure + keeper position)
+- keep existing event schema while adding tick metadata for replay fidelity
+
+Validation:
+
+- event volumes stay in plausible ranges
+- turnover patterns become pressure-dependent instead of mostly style-random
+
+### Spatial Phase 4: Benchmark integration and tuning
+
+Scope:
+
+- route benchmark `simulate_with_rng` through the spatial live engine path
+- rerun benchmark suite and refresh benchmark artifacts
+- tune spatial constants if baseline drifts outside target bands
+
+Validation benchmark set:
+
+- `bash scripts/record-engine-benchmark.sh --allow-dirty`
+- `bash scripts/render-tactic-matrix-benchmark.sh --allow-dirty`
+- `bash scripts/render-role-trait-matrix-benchmark.sh --allow-dirty`
+- `bash scripts/render-fit-profile-matrix-benchmark.sh --allow-dirty`
+
+Exit criteria:
+
+- benchmark global profile remains near calibration bands
+- role/trait and fit-profile reports still show player dependence over flat mechanical exploits
+- spatial snapshot is sufficiently complete for a future FM-style 2D renderer

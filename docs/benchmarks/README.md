@@ -149,3 +149,4 @@ Roadmap:
 - [engine-tuning-framework.md](/home/quackson/Desktop/Coding/openfootmanager/docs/benchmarks/engine-tuning-framework.md)
 - [engine-traits-players.md](/home/quackson/Desktop/Coding/openfootmanager/docs/benchmarks/engine-traits-players.md)
 - [engine-trait-action-phases.md](/home/quackson/Desktop/Coding/openfootmanager/docs/benchmarks/engine-trait-action-phases.md)
+- [engine-spatial-2d-plan.md](/home/quackson/Desktop/Coding/openfootmanager/docs/benchmarks/engine-spatial-2d-plan.md)
